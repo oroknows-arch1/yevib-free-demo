@@ -1,0 +1,27 @@
+{
+  "name": "orok-studios-mvp",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "openai": "^6.38.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oroknows-arch1/yevib-mvp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/oroknows-arch1/yevib-mvp/issues"
+  },
+  "homepage": "https://github.com/oroknows-arch1/yevib-mvp#readme"
+}
