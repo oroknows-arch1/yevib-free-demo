@@ -5482,6 +5482,16 @@ function parseGeneratedPosts(rawText = "") {
   return [];
 }
 
+function buildSafeFallbackPosts(category = "Something Real") {
+  return [
+    "A business does not always need a bigger claim to make better content. Sometimes the strongest move is to explain one simple thing clearly, stay useful, and let people understand the value without forcing the message.\n\n#YEVIB #SmallBusiness #Content",
+
+    "When the source material is limited, the safer move is to keep the post educational instead of pretending there is proof that is not there. Clear, honest content still gives people something useful to connect with.\n\n#YEVIB #BusinessTrust #Marketing",
+
+    "Good content should not outrun what the business has actually shown. If the scan cannot safely support a specific claim, YEVIB should keep the message grounded, simple, and review-ready.\n\n#YEVIB #OwnerVoice #ReviewBeforeUse"
+  ];
+}
+
 async function generatePostsWithRetry(promptBase, category) {
   let retryReason = "";
 
@@ -5609,11 +5619,12 @@ You must correct this now:
     return posts;
   }
 
-  throw new Error(
-    retryReason
-      ? `Post generation failed after retries: ${retryReason}`
-      : "Post generation failed after retries: Unknown output enforcement failure."
-  );
+  console.warn("POST FALLBACK USED:", {
+  category,
+  reason: retryReason || "Unknown output enforcement failure."
+});
+
+return buildSafeFallbackPosts(category);
 }
 
 
