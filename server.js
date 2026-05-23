@@ -2,13 +2,51 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 const OpenAI = require("openai");
+const rateLimit = require("express-rate-limit");
 const path = require("path");
 const fs = require("fs");
 
 const app = express();
+
+if (!process.env.OPENAI_API_KEY) {
+  console.error("Missing required environment variable: OPENAI_API_KEY");
+  process.exit(1);
+}
+
+app.use(helmet({
+  contentSecurityPolicy: false
+}));
+
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Too many requests. Please try again later."
+  }
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Free demo usage limit reached. Please try again later."
+  }
+});
+app.use(cors());
+
+app.use(globalLimiter);
+
+app.use(express.json({
+  limit: "2mb"
+}));
 app.use(express.static(__dirname));
 
 const openai = new OpenAI({
@@ -9239,7 +9277,7 @@ function runAgentCycleForProfile(profile = {}) {
   };
 }
 
-app.post("/build-profile", async (req, res) => {
+app.post("/build-profile", aiLimiter, async (req, res) => {
   try {
     const profile = await buildBusinessProfile(req.body || {});
 
@@ -9256,7 +9294,7 @@ app.post("/build-profile", async (req, res) => {
 });
 
 
-app.post("/run-agent-cycle", async (req, res) => {
+app.post("/run-agent-cycle", aiLimiter, async (req, res) => {
   try {
     const { profile } = req.body || {};
     const result = runAgentCycleForProfile(profile);
@@ -9830,7 +9868,7 @@ app.post("/phase3/run-regression", async (req, res) => {
   }
 });
 
-app.post("/generate", async (req, res) => {
+app.post("/generate", aiLimiter, async (req, res) => {
   const {
     mode,
     idea,
@@ -10727,7 +10765,7 @@ The image should show the proof of digital value through human clarity and pract
   return rawPrompt;
 }
 
-app.post("/generate-image", async (req, res) => {
+app.post("/generate-image", aiLimiter, async (req, res) => {
   const { imagePrompt, discoveryProfile } = req.body;
   const sceneType = classifySceneType(imagePrompt || "");
 
