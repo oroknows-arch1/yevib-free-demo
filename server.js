@@ -19,7 +19,22 @@ app.use(helmet({
   contentSecurityPolicy: false
 }));
 
-app.use(cors());
+const allowedOrigins =
+  process.env.NODE_ENV === "production"
+    ? ["https://yevib-free-demo.onrender.com"]
+    : ["http://localhost:3000", "http://127.0.0.1:3000"];
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    },
+  })
+);
 app.use(express.json({ limit: "1mb" }));
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
