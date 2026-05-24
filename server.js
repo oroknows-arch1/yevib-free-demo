@@ -72,15 +72,64 @@ const globalLimiter = rateLimit({
   }
 });
 
-const aiLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: "Free demo usage limit reached. Please try again later."
+function createAiLimiter(max, message) {
+  return rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      error: message,
+    },
+  });
+}
+
+const DAILY_AI_CALL_LIMIT = Number(process.env.DAILY_AI_CALL_LIMIT || 50);
+
+let dailyAiUsage = {
+  date: new Date().toISOString().slice(0, 10),
+  count: 0,
+};
+
+function dailyAiBudgetGuard(req, res, next) {
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (dailyAiUsage.date !== today) {
+    dailyAiUsage = {
+      date: today,
+      count: 0,
+    };
   }
-});
+
+  if (dailyAiUsage.count >= DAILY_AI_CALL_LIMIT) {
+    return res.status(429).json({
+      error: "Daily free demo AI limit reached. Please try again tomorrow.",
+    });
+  }
+
+  dailyAiUsage.count += 1;
+  next();
+}
+
+const scanProfileLimiter = createAiLimiter(
+  8,
+  "Free demo scan/profile limit reached. Please try again later."
+);
+
+const agentCycleLimiter = createAiLimiter(
+  12,
+  "Free demo agent cycle limit reached. Please try again later."
+);
+
+const postGenerationLimiter = createAiLimiter(
+  10,
+  "Free demo post generation limit reached. Please try again later."
+);
+
+const imageGenerationLimiter = createAiLimiter(
+  3,
+  "Free demo image generation limit reached. Please try again later."
+);
 
 const HARD_CAPS = Object.freeze({
   businessUrl: 500,
@@ -133,7 +182,7 @@ app.use([
   "/run-agent-cycle",
   "/generate",
   "/generate-image"
-], rejectBadBody, enforceDemoHardCaps);
+], rejectBadBody, enforceDemoHardCaps, dailyAiBudgetGuard);
 
 const REQUIRED_ENV = ["OPENAI_API_KEY"];
 
@@ -9466,7 +9515,7 @@ function runAgentCycleForProfile(profile = {}) {
   };
 }
 
-app.post("/build-profile", aiLimiter, validateBusinessUrl, async (req, res) => {
+app.post("/build-profile", scanProfileLimiter, validateBusinessUrl, async (req, res) => {
   try {
     const profile = await buildBusinessProfile(req.body || {});
 
@@ -9483,7 +9532,7 @@ app.post("/build-profile", aiLimiter, validateBusinessUrl, async (req, res) => {
 });
 
 
-app.post("/run-agent-cycle", aiLimiter, async (req, res) => {
+app.post("/run-agent-cycle", agentCycleLimiter, async (req, res) => {
   try {
     const { profile } = req.body || {};
     const result = runAgentCycleForProfile(profile);
@@ -10074,7 +10123,7 @@ const safeLimit = clampInt(requestedLimit, 1, runnableSites.length || 1);
   }
 });
 
-app.post("/generate", aiLimiter, async (req, res) => {
+app.post("/generate", postGenerationLimiter, async (req, res) => {
   const {
     mode,
     idea,
@@ -10984,7 +11033,7 @@ The image should show the proof of digital value through human clarity and pract
   return rawPrompt;
 }
 
-app.post("/generate-image", aiLimiter, async (req, res) => {
+app.post("/generate-image", imageGenerationLimiter, async (req, res) => {
   const body = req.body || {};
 const imagePrompt = cleanText(body.imagePrompt, 1200);
 const discoveryProfile =
