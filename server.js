@@ -125,9 +125,12 @@ app.use(globalLimiter);
 app.use(express.static(__dirname));
 app.use([
   "/save-owner-choice",
+  "/analyze-voice"
+], blockProductionOnly);
+
+app.use([
   "/build-profile",
   "/run-agent-cycle",
-  "/analyze-voice",
   "/generate",
   "/generate-image"
 ], rejectBadBody, enforceDemoHardCaps);
@@ -222,6 +225,17 @@ function cleanNumber(value, fallback = 1, min = 1, max = 50) {
   if (!Number.isFinite(num)) return fallback;
   return Math.max(min, Math.min(max, Math.floor(num)));
 }
+
+function blockProductionOnly(req, res, next) {
+  if (process.env.NODE_ENV === "production") {
+    return res.status(404).json({
+      error: "Not found."
+    });
+  }
+
+  next();
+}
+
 const QUIET_FAMILY_WORDS = ["quiet", "calm", "gentle", "subtle", "steady", "small"];
 const NON_QUIET_REPLACEMENTS = {
   quiet: "real",
@@ -5812,7 +5826,7 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "free-v1.html"));
 });
 
-app.post("/save-owner-choice", async (req, res) => {
+app.post("/save-owner-choice", blockProductionOnly, async (req, res) => {
   try {
     const body = req.body || {};
 
@@ -9487,7 +9501,7 @@ app.post("/run-agent-cycle", aiLimiter, async (req, res) => {
   }
 });  
 
-app.post("/analyze-voice", async (req, res) => {
+app.post("/analyze-voice", blockProductionOnly, async (req, res) => {
   const input = cleanText(req.body?.input, 5000);
 
   if (!input) {
