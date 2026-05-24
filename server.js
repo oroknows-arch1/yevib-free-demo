@@ -35,7 +35,7 @@ app.use(
     },
   })
 );
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "250kb" }));
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -55,8 +55,73 @@ const aiLimiter = rateLimit({
     error: "Free demo usage limit reached. Please try again later."
   }
 });
+
+const HARD_CAPS = Object.freeze({
+  businessUrl: 500,
+  pastedSourceText: 8000,
+  manualBusinessContext: 8000,
+  ownerWritingSample: 4000,
+  founderGoal: 120,
+  quickType: 120,
+  imagePrompt: 3000,
+  selectedPost: 1200,
+});
+
+function rejectLargeInput(res, fieldName, value, maxLength) {
+  const text = String(value || "");
+
+  if (text.length <= maxLength) return false;
+
+  res.status(413).json({
+    error: "Input too large.",
+    field: fieldName,
+    maxLength,
+  });
+
+  return true;
+}
+
+function enforceDemoHardCaps(req, res, next) {
+  const body = req.body || {};
+
+  for (const [fieldName, maxLength] of Object.entries(HARD_CAPS)) {
+    if (rejectLargeInput(res, fieldName, body[fieldName], maxLength)) {
+      return;
+    }
+  }
+
+  next();
+}
+
+app.set("trust proxy", 1);
+
 app.use(globalLimiter);
 app.use(express.static(__dirname));
+app.use("/api", enforceDemoHardCaps);
+app.use("/api", aiLimiter);
+
+const REQUIRED_ENV = ["OPENAI_API_KEY"];
+
+function validateEnvironment() {
+  const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
+
+  if (missing.length > 0) {
+    console.error("❌ Missing required environment variables:");
+    missing.forEach((key) => console.error(`- ${key}`));
+    console.error("App startup blocked for safety.");
+    process.exit(1);
+  }
+
+  if (!String(process.env.OPENAI_API_KEY).startsWith("sk-")) {
+    console.error("❌ OPENAI_API_KEY appears invalid.");
+    console.error("App startup blocked for safety.");
+    process.exit(1);
+  }
+
+  console.log("✅ Environment validation passed.");
+}
+
+validateEnvironment();
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -64,6 +129,7 @@ const openai = new OpenAI({
 
 const PORT = process.env.PORT || 3000;
 const maxChars = 500;
+
 const OWNER_KB_PATH = path.join(__dirname, "owner-kb.json");
 const PHASE3_TEST_MATRIX_PATH = path.join(__dirname, "phase3-test-matrix.json");
 function cleanText(value, maxLength = 1000) {
