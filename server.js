@@ -9847,17 +9847,23 @@ app.get("/ubdg/self-test", async (req, res) => {
 });
 
 app.post("/phase3/run-regression", async (req, res) => {
+  if (process.env.NODE_ENV === "production") {
+    return res.status(404).json({
+      error: "Not found.",
+    });
+  }
+
   const startedAt = new Date().toISOString();
 
   try {
     const matrix = readPhase3TestMatrix();
     const runnableSites = getRunnablePhase3Sites(matrix);
 
-const requestedLimit = cleanNumber(
-  req.body?.limit,
-  runnableSites.length,
-  1,
-  runnableSites.length || 1
+    const requestedLimit = cleanNumber(
+      req.body?.limit,
+      runnableSites.length,
+      1,
+      runnableSites.length || 1
 );
 const safeLimit = clampInt(requestedLimit, 1, runnableSites.length || 1);
     const selectedSites = runnableSites.slice(0, safeLimit);
