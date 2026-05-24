@@ -35,7 +35,33 @@ app.use(
     },
   })
 );
-app.use(express.json({ limit: "250kb" }));
+app.use(express.json({
+  limit: "250kb",
+  strict: true,
+  type: "application/json"
+}));
+
+app.use((err, req, res, next) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({
+      error: "Request body too large."
+    });
+  }
+
+  if (
+    err.type === "entity.parse.failed" ||
+    err instanceof SyntaxError ||
+    err.status === 400
+  ) {
+    return res.status(400).json({
+      error: "Malformed JSON payload."
+    });
+  }
+
+  return res.status(500).json({
+    error: "Server error."
+  });
+});
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -97,8 +123,14 @@ app.set("trust proxy", 1);
 
 app.use(globalLimiter);
 app.use(express.static(__dirname));
-app.use("/api", enforceDemoHardCaps);
-app.use("/api", aiLimiter);
+app.use([
+  "/save-owner-choice",
+  "/build-profile",
+  "/run-agent-cycle",
+  "/analyze-voice",
+  "/generate",
+  "/generate-image"
+], rejectBadBody, enforceDemoHardCaps);
 
 const REQUIRED_ENV = ["OPENAI_API_KEY"];
 
@@ -119,6 +151,50 @@ function validateEnvironment() {
   }
 
   console.log("✅ Environment validation passed.");
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function rejectBadBody(req, res, next) {
+  if (!isPlainObject(req.body)) {
+    return res.status(400).json({
+      error: "Request body must be a JSON object."
+    });
+  }
+
+  next();
+}
+
+function isValidHttpUrl(value = "") {
+  try {
+    const url = new URL(String(value).trim());
+    return ["http:", "https:"].includes(url.protocol) && Boolean(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function validateBusinessUrl(req, res, next) {
+  const businessUrl = String(req.body?.businessUrl || "").trim();
+
+  if (!businessUrl) {
+    return res.status(400).json({
+      error: "businessUrl is required."
+    });
+  }
+
+  const normalized = normalizeUrl(businessUrl);
+
+  if (!isValidHttpUrl(normalized)) {
+    return res.status(400).json({
+      error: "Invalid businessUrl."
+    });
+  }
+
+  req.body.businessUrl = normalized;
+  next();
 }
 
 validateEnvironment();
@@ -9376,7 +9452,7 @@ function runAgentCycleForProfile(profile = {}) {
   };
 }
 
-app.post("/build-profile", aiLimiter, async (req, res) => {
+app.post("/build-profile", aiLimiter, validateBusinessUrl, async (req, res) => {
   try {
     const profile = await buildBusinessProfile(req.body || {});
 
