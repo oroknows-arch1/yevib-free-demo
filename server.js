@@ -5710,7 +5710,7 @@ const manualBusinessContext = cleanText(body.manualBusinessContext, 3000);
     });
   } catch (err) {
     console.error("SAVE OWNER CHOICE ERROR:", err);
-    res.status(500).json({ error: err.message || "Failed to save owner choice." });
+    res.status(500).json({ error: "Failed to save owner choice." });
   }
 });
 
@@ -7983,7 +7983,7 @@ async function runSinglePhase3RegressionSite(site = {}, defaults = {}) {
 
     return buildPhase3RegressionResult({
       site,
-      error: err?.message || "Unknown regression site error.",
+      error: "Regression site failed.",
     });
   }
 }
@@ -9321,7 +9321,7 @@ app.post("/build-profile", aiLimiter, async (req, res) => {
   } catch (err) {
     console.error("BUILD PROFILE ERROR:", err);
     res.status(500).json({
-      error: err.message || "Failed to build profile.",
+      error: "Failed to build profile.",
     });
   }
 });
@@ -9340,7 +9340,7 @@ app.post("/run-agent-cycle", aiLimiter, async (req, res) => {
   } catch (err) {
     console.error("RUN AGENT CYCLE ERROR:", err);
     res.status(500).json({
-      error: err.message || "Failed to run agent cycle.",
+     error: "Failed to run agent cycle.",
     });
   }
 });  
@@ -9362,7 +9362,7 @@ app.post("/analyze-voice", async (req, res) => {
     });
   } catch (err) {
     console.error("VOICE AGENT ERROR:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to analyze voice." });
   }
 });
 
@@ -9841,7 +9841,7 @@ app.get("/ubdg/self-test", async (req, res) => {
 
     res.status(500).json({
       ok: false,
-      error: err?.message || "Unknown UBDG self-test error.",
+      error: "UBDG self-test failed.",
     });
   }
 });
@@ -9907,7 +9907,7 @@ const safeLimit = clampInt(requestedLimit, 1, runnableSites.length || 1);
     console.error("PHASE 3 REGRESSION ROUTE ERROR:", err);
 
     res.status(500).json({
-      error: err?.message || "Unknown Phase 3 regression route error.",
+    error: "Phase 3 regression route failed.",
     });
   }
 });
@@ -10350,7 +10350,7 @@ let posts = await generatePostsWithHistoryGuard(
 });
   } catch (err) {
     console.error("GENERATE ERROR:", err);
-    res.status(500).json({ error: err.message || "Failed to generate posts." });
+    res.status(500).json({ error: "Failed to generate posts." });
   }
 });
 
@@ -10750,7 +10750,7 @@ const sceneType = classifySceneType(imagePrompt);
     } catch (err) {
       res.status(500).json({
         ok: false,
-        error: err.message || "Failed to build image decision packet.",
+        error: "Failed to build image decision packet.",
       });
     }
   });
