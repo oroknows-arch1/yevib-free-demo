@@ -172,13 +172,6 @@ app.set("trust proxy", 1);
 
 app.use(globalLimiter);
 app.use(express.static(__dirname));
-app.get("/health/config", (req, res) => {
-  res.json({
-    ok: true,
-    dailyAiCallLimitConfigured: Boolean(process.env.DAILY_AI_CALL_LIMIT),
-    dailyAiCallLimit: DAILY_AI_CALL_LIMIT,
-  });
-});
 app.use([
   "/save-owner-choice",
   "/analyze-voice"
