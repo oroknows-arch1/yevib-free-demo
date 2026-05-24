@@ -20,7 +20,7 @@ app.use(helmet({
 }));
 
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "1mb" }));
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -40,13 +40,7 @@ const aiLimiter = rateLimit({
     error: "Free demo usage limit reached. Please try again later."
   }
 });
-app.use(cors());
-
 app.use(globalLimiter);
-
-app.use(express.json({
-  limit: "2mb"
-}));
 app.use(express.static(__dirname));
 
 const openai = new OpenAI({
@@ -57,7 +51,20 @@ const PORT = process.env.PORT || 3000;
 const maxChars = 500;
 const OWNER_KB_PATH = path.join(__dirname, "owner-kb.json");
 const PHASE3_TEST_MATRIX_PATH = path.join(__dirname, "phase3-test-matrix.json");
+function cleanText(value, maxLength = 1000) {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/\0/g, "")
+    .replace(/[<>]/g, "")
+    .trim()
+    .slice(0, maxLength);
+}
 
+function cleanNumber(value, fallback = 1, min = 1, max = 50) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(num)));
+}
 const QUIET_FAMILY_WORDS = ["quiet", "calm", "gentle", "subtle", "steady", "small"];
 const NON_QUIET_REPLACEMENTS = {
   quiet: "real",
@@ -5650,18 +5657,18 @@ app.get("/", (req, res) => {
 
 app.post("/save-owner-choice", async (req, res) => {
   try {
-    const {
-      businessName,
-      businessSummary,
-      founderGoal,
-      quickType,
-      category,
-      ownerFeeling,
-      chosenPost,
-      voiceSourceText,
-      ownerWritingSample,
-      manualBusinessContext,
-    } = req.body || {};
+    const body = req.body || {};
+
+const businessName = cleanText(body.businessName, 120);
+const businessSummary = cleanText(body.businessSummary, 1500);
+const founderGoal = cleanText(body.founderGoal, 120);
+const quickType = cleanText(body.quickType, 80);
+const category = cleanText(body.category, 80);
+const ownerFeeling = cleanText(body.ownerFeeling, 500);
+const chosenPost = cleanText(body.chosenPost, 1200);
+const voiceSourceText = cleanText(body.voiceSourceText, 5000);
+const ownerWritingSample = cleanText(body.ownerWritingSample, 5000);
+const manualBusinessContext = cleanText(body.manualBusinessContext, 3000);
 
     if (!businessName || !chosenPost) {
       return res.status(400).json({
@@ -9324,7 +9331,13 @@ app.post("/run-agent-cycle", aiLimiter, async (req, res) => {
 });  
 
 app.post("/analyze-voice", async (req, res) => {
-  const { input } = req.body;
+  const input = cleanText(req.body?.input, 5000);
+
+  if (!input) {
+    return res.status(400).json({
+      error: "input is required.",
+    });
+  }
 
   try {
     const profile = await runJsonChat(voiceAgentPrompt(clipText(input, 5000)));
@@ -9825,8 +9838,13 @@ app.post("/phase3/run-regression", async (req, res) => {
     const matrix = readPhase3TestMatrix();
     const runnableSites = getRunnablePhase3Sites(matrix);
 
-    const requestedLimit = Number(req.body?.limit || runnableSites.length);
-    const safeLimit = clampInt(requestedLimit, 1, runnableSites.length || 1);
+const requestedLimit = cleanNumber(
+  req.body?.limit,
+  runnableSites.length,
+  1,
+  runnableSites.length || 1
+);
+const safeLimit = clampInt(requestedLimit, 1, runnableSites.length || 1);
     const selectedSites = runnableSites.slice(0, safeLimit);
 
     if (selectedSites.length === 0) {
@@ -10687,8 +10705,21 @@ function buildImageDecisionPacket(input = {}) {
 if (process.env.NODE_ENV !== "production") {
   app.post("/debug-image-decision", (req, res) => {
     try {
-      const { imagePrompt, discoveryProfile } = req.body;
-      const sceneType = classifySceneType(imagePrompt || "");
+const body = req.body || {};
+const imagePrompt = cleanText(body.imagePrompt, 1200);
+const discoveryProfile =
+  body.discoveryProfile && typeof body.discoveryProfile === "object"
+    ? body.discoveryProfile
+    : {};
+
+if (!imagePrompt) {
+  return res.status(400).json({
+    ok: false,
+    error: "imagePrompt is required.",
+  });
+}
+
+const sceneType = classifySceneType(imagePrompt);
 
       const imageDecisionPacket = buildImageDecisionPacket({
         imagePrompt,
@@ -10777,8 +10808,20 @@ The image should show the proof of digital value through human clarity and pract
 }
 
 app.post("/generate-image", aiLimiter, async (req, res) => {
-  const { imagePrompt, discoveryProfile } = req.body;
-  const sceneType = classifySceneType(imagePrompt || "");
+  const body = req.body || {};
+const imagePrompt = cleanText(body.imagePrompt, 1200);
+const discoveryProfile =
+  body.discoveryProfile && typeof body.discoveryProfile === "object"
+    ? body.discoveryProfile
+    : {};
+
+if (!imagePrompt) {
+  return res.status(400).json({
+    error: "imagePrompt is required.",
+  });
+}
+
+const sceneType = classifySceneType(imagePrompt);
 
   try {
     const imageDecisionPacket = buildImageDecisionPacket({
