@@ -9866,7 +9866,7 @@ const safeLimit = clampInt(requestedLimit, 1, runnableSites.length || 1);
       return res.status(400).json({
         error:
           "No runnable Phase 3 regression sites found. Add businessUrl values to phase3-test-matrix.json first.",
-        matrixPath: PHASE3_TEST_MATRIX_PATH,
+        matrixFile: "phase3-test-matrix.json",
         totalSites: Array.isArray(matrix?.sites) ? matrix.sites.length : 0,
         runnableSites: 0,
       });
