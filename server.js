@@ -19,10 +19,22 @@ app.use(helmet({
   contentSecurityPolicy: false
 }));
 
+const DEFAULT_PRODUCTION_ORIGINS = ["https://yevib-free-demo.onrender.com"];
+const DEFAULT_DEVELOPMENT_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"];
+
+function parseAllowedOrigins(value = "") {
+  return String(value)
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
 const allowedOrigins =
-  process.env.NODE_ENV === "production"
-    ? ["https://yevib-free-demo.onrender.com"]
-    : ["http://localhost:3000", "http://127.0.0.1:3000"];
+  parseAllowedOrigins(process.env.ALLOWED_ORIGINS).length > 0
+    ? parseAllowedOrigins(process.env.ALLOWED_ORIGINS)
+    : process.env.NODE_ENV === "production"
+    ? DEFAULT_PRODUCTION_ORIGINS
+    : DEFAULT_DEVELOPMENT_ORIGINS;
 
 app.use(
   cors({
