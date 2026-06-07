@@ -10603,6 +10603,7 @@ RAW OWNER VOICE AUTHORITY:
 - Preserve lived phrasing such as "mate", "reckon", "had a look", and "straight talk" when they appear in MANUAL VOICE INPUT. Do not polish them into neutral brand language.
 - Claim safety governs facts only. Weak or thin approved claims mean fewer specific proof statements — not smoother, corporate, or third-person voice.
 - If any instruction below conflicts with MANUAL VOICE INPUT on tone or wording, follow MANUAL VOICE INPUT.
+- Mirror the owner's wording patterns, but do not paste the full MANUAL VOICE INPUT into any single post. Use 1–2 short owner phrases per post, then adapt them naturally to the website topic.
 
 VOICE PROFILE (SECONDARY — supporting traits only):
 ` : `
