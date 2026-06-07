@@ -338,6 +338,77 @@ function saveEarlyAccessLead(lead) {
   return data.leads.length;
 }
 
+function buildEarlyAccessEmailContent(lead = {}) {
+  return [
+    "New YEVIB Early Access lead",
+    "",
+    `Name: ${lead.name || ""}`,
+    `Email: ${lead.email || ""}`,
+    `Business: ${lead.businessName || "(not provided)"}`,
+    `Website: ${lead.website || "(not provided)"}`,
+    `Message: ${lead.message || "(not provided)"}`,
+    `Submitted: ${lead.createdAt || ""}`,
+  ].join("\n");
+}
+
+async function sendEarlyAccessNotification(lead) {
+  const notifyEmail = cleanText(process.env.LEAD_NOTIFY_EMAIL, 254);
+  const fromEmail = cleanText(process.env.EMAIL_FROM, 254);
+  const resendKey = String(process.env.RESEND_API_KEY || "").trim();
+  const sendgridKey = String(process.env.SENDGRID_API_KEY || "").trim();
+  const subject = "New YEVIB Early Access lead";
+  const text = buildEarlyAccessEmailContent(lead);
+
+  if (!notifyEmail || !fromEmail) {
+    console.warn("EARLY ACCESS EMAIL: skipped — LEAD_NOTIFY_EMAIL or EMAIL_FROM not configured.");
+    return { sent: false, reason: "missing_config" };
+  }
+
+  if (!isValidEmail(notifyEmail)) {
+    console.warn("EARLY ACCESS EMAIL: skipped — LEAD_NOTIFY_EMAIL is invalid.");
+    return { sent: false, reason: "invalid_notify_email" };
+  }
+
+  if (resendKey) {
+    try {
+      const { Resend } = require("resend");
+      const resend = new Resend(resendKey);
+      await resend.emails.send({
+        from: fromEmail,
+        to: notifyEmail,
+        subject,
+        text,
+      });
+      console.log("EARLY ACCESS EMAIL: notification sent via Resend.");
+      return { sent: true, provider: "resend" };
+    } catch (err) {
+      console.error("EARLY ACCESS EMAIL: Resend failed —", err.message || "send error");
+      return { sent: false, reason: "send_failed", provider: "resend" };
+    }
+  }
+
+  if (sendgridKey) {
+    try {
+      const sgMail = require("@sendgrid/mail");
+      sgMail.setApiKey(sendgridKey);
+      await sgMail.send({
+        to: notifyEmail,
+        from: fromEmail,
+        subject,
+        text,
+      });
+      console.log("EARLY ACCESS EMAIL: notification sent via SendGrid.");
+      return { sent: true, provider: "sendgrid" };
+    } catch (err) {
+      console.error("EARLY ACCESS EMAIL: SendGrid failed —", err.message || "send error");
+      return { sent: false, reason: "send_failed", provider: "sendgrid" };
+    }
+  }
+
+  console.warn("EARLY ACCESS EMAIL: skipped — no RESEND_API_KEY or SENDGRID_API_KEY configured.");
+  return { sent: false, reason: "no_provider" };
+}
+
 function cleanNumber(value, fallback = 1, min = 1, max = 50) {
   const num = Number(value);
   if (!Number.isFinite(num)) return fallback;
@@ -6173,6 +6244,13 @@ app.post("/early-access", earlyAccessLimiter, rejectBadBody, async (req, res) =>
     };
 
     const leadCount = saveEarlyAccessLead(lead);
+    console.log(`EARLY ACCESS: lead saved locally (total: ${leadCount}).`);
+
+    try {
+      await sendEarlyAccessNotification(lead);
+    } catch (err) {
+      console.error("EARLY ACCESS EMAIL: unexpected error —", err.message || "send error");
+    }
 
     res.json({
       ok: true,
