@@ -10529,14 +10529,12 @@ APPROVED CLAIMS:
 ${approvedPostClaimLines}
 
 NON-NEGOTIABLE CLAIM RULES:
-- Use only the approved claims listed above when making business-specific claims.
-- Do not upgrade source facts into stronger promises.
-- Do not turn source facts into guarantees, superiority claims, sales results, customer outcomes, or operational promises unless they appear in the approved claims.
-- Do not invent founder beliefs, founder emotions, internal standards, direct relationships, process details, customer expectations, or behind-the-scenes behaviour.
-- Do not write in first person as the founder, owner, team, or business unless owner-provided text or website source text directly supports that voice.
-- If owner-provided voice is not available, write in third person or neutral brand voice.
-- If approved claims are weak or unavailable, write useful category-level education instead of specific proof claims.
-- Do not use phrases like "I refuse", "I demand", "I make it a priority", "we don't compromise", or "we demand" unless that exact strength is source-backed.
+- Claim safety limits facts, not voice. When manualVoiceInput is provided, keep the owner's tone, rhythm, phrasing, and point of view dominant across all 3 posts.
+- When manualVoiceInput is provided, first-person owner voice is allowed even if approved claims are weak; do not switch to third person or neutral brand voice because evidence is thin.
+- When manualVoiceInput is provided and approved claims are weak or unavailable, stay specific only where source-backed; otherwise write less specific and more general — but still in the owner's human voice. Do not invent proof, guarantees, records, "always/every", "non-negotiable", or exact operational details.
+- When manualVoiceInput is not provided, do not write in first person as the founder, owner, team, or business unless website source text directly supports that voice; otherwise use third person or neutral brand voice.
+- When manualVoiceInput is not provided and approved claims are weak or unavailable, write useful category-level education instead of specific proof claims.
+- Do not upgrade source facts into stronger promises, guarantees, superiority claims, sales results, customer outcomes, operational promises, or behind-the-scenes behaviour unless they appear in approved claims.
 
 QUICK LENS:
 ${lensTitle}
@@ -10600,20 +10598,19 @@ ${buildVoiceInstructions(voiceProfile)}
 CORE RULE:
 All 3 posts must sound like the SAME business voice.
 Do NOT create 3 different personalities.
-The business must remain clear, consistent, and human-led without inventing owner perspective.
+The business must remain clear, consistent, and human-led; when manualVoiceInput exists, owner perspective is intentional and dominant — claim safety governs facts only.
 
 OWNER-CENTRED RULE:
-- If owner-provided writing exists, the owner can remain the speaker and central force behind the words.
-- If the only source is the public website, do not invent founder or owner first-person perspective.
-- The business may feel human-led, but only through claims and tone supported by the source material.
-- Keep the owner present only when owner visibility, founder writing, or approved claims support it.
+- If manualVoiceInput exists, the owner remains the dominant speaker for tone, rhythm, phrasing, and point of view across all 3 posts.
+- If manualVoiceInput exists, claim safety may limit what facts can be stated, but must not flatten the owner into neutral brand narration or category-level lecturing.
+- If the only source is the public website and manualVoiceInput is absent, do not invent founder or owner first-person perspective.
+- The business may feel human-led through tone supported by manualVoiceInput or source material, while factual claims stay inside approved claims.
 
 IMPORTANT VOICE RULE:
-- Do NOT write like a customer testimonial.
-- Do NOT write as if praising the business from the outside.
-- Do NOT write from inside the owner voice unless owner-provided writing or approved source evidence supports that voice.
-- When owner voice is not source-backed, use neutral brand voice or third-person business voice.
-- Even when customer outcome is strong, keep the post grounded in approved claims and category education.
+- Do NOT write from inside the owner voice unless manualVoiceInput or owner-provided writing exists, or approved source evidence supports that voice.
+- When manualVoiceInput exists, stay inside the owner voice even if approved claims are weak; reduce factual specificity instead of switching to neutral or third-person voice.
+- When owner voice is not source-backed and manualVoiceInput is absent, use neutral brand voice or third-person business voice.
+- Keep factual claims grounded in approved claims; weak evidence means fewer specific claims, not less human tone when manualVoiceInput exists.
 
 LENS SEPARATION RULE:
 - Make this lens clearly distinct from the other quick buttons
