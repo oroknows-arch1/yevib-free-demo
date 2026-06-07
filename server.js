@@ -302,6 +302,26 @@ function isValidEmail(value = "") {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function cleanEmailFromAddress(value, maxLength = 254) {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/\0/g, "")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function isValidEmailFromAddress(value = "") {
+  const trimmed = cleanEmailFromAddress(value);
+  if (!trimmed) return false;
+
+  const namedMatch = trimmed.match(/^(.+?)\s*<([^<>]+)>$/);
+  if (namedMatch) {
+    return isValidEmail(namedMatch[2].trim());
+  }
+
+  return isValidEmail(trimmed);
+}
+
 function ensureEarlyAccessLeadsFile() {
   if (!fs.existsSync(EARLY_ACCESS_LEADS_PATH)) {
     fs.writeFileSync(
@@ -353,7 +373,7 @@ function buildEarlyAccessEmailContent(lead = {}) {
 
 async function sendEarlyAccessNotification(lead) {
   const notifyEmail = cleanText(process.env.LEAD_NOTIFY_EMAIL, 254);
-  const fromEmail = cleanText(process.env.EMAIL_FROM, 254);
+  const fromEmail = cleanEmailFromAddress(process.env.EMAIL_FROM, 254);
   const resendKey = String(process.env.RESEND_API_KEY || "").trim();
   const sendgridKey = String(process.env.SENDGRID_API_KEY || "").trim();
   const subject = "New YEVIB Early Access lead";
@@ -367,6 +387,11 @@ async function sendEarlyAccessNotification(lead) {
   if (!isValidEmail(notifyEmail)) {
     console.warn("EARLY ACCESS EMAIL: skipped — LEAD_NOTIFY_EMAIL is invalid.");
     return { sent: false, reason: "invalid_notify_email" };
+  }
+
+  if (!isValidEmailFromAddress(fromEmail)) {
+    console.warn("EARLY ACCESS EMAIL: skipped — EMAIL_FROM is invalid.");
+    return { sent: false, reason: "invalid_from_email" };
   }
 
   if (resendKey) {
