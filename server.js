@@ -351,11 +351,43 @@ function writeEarlyAccessLeads(data) {
   fs.writeFileSync(EARLY_ACCESS_LEADS_PATH, JSON.stringify(data, null, 2), "utf8");
 }
 
+function normalizeLeadEmail(value = "") {
+  return String(value).trim().toLowerCase();
+}
+
 function saveEarlyAccessLead(lead) {
   const data = readEarlyAccessLeads();
-  data.leads.push(lead);
+  const normalizedEmail = normalizeLeadEmail(lead.email);
+  const existingIndex = data.leads.findIndex(
+    (entry) => normalizeLeadEmail(entry.email) === normalizedEmail
+  );
+
+  if (existingIndex >= 0) {
+    const existing = data.leads[existingIndex];
+    data.leads[existingIndex] = {
+      ...existing,
+      name: lead.name,
+      email: lead.email,
+      businessName: lead.businessName,
+      website: lead.website,
+      message: lead.message,
+      createdAt: existing.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+    writeEarlyAccessLeads(data);
+    return { leadCount: data.leads.length, isDuplicate: true };
+  }
+
+  data.leads.push({
+    name: lead.name,
+    email: lead.email,
+    businessName: lead.businessName,
+    website: lead.website,
+    message: lead.message,
+    createdAt: lead.createdAt,
+  });
   writeEarlyAccessLeads(data);
-  return data.leads.length;
+  return { leadCount: data.leads.length, isDuplicate: false };
 }
 
 function buildEarlyAccessEmailContent(lead = {}) {
@@ -6268,13 +6300,17 @@ app.post("/early-access", earlyAccessLimiter, rejectBadBody, async (req, res) =>
       createdAt: new Date().toISOString(),
     };
 
-    const leadCount = saveEarlyAccessLead(lead);
-    console.log(`EARLY ACCESS: lead saved locally (total: ${leadCount}).`);
+    const { leadCount, isDuplicate } = saveEarlyAccessLead(lead);
 
-    try {
-      await sendEarlyAccessNotification(lead);
-    } catch (err) {
-      console.error("EARLY ACCESS EMAIL: unexpected error —", err.message || "send error");
+    if (isDuplicate) {
+      console.log("EARLY ACCESS: duplicate lead updated.");
+    } else {
+      console.log(`EARLY ACCESS: new lead saved locally (total: ${leadCount}).`);
+      try {
+        await sendEarlyAccessNotification(lead);
+      } catch (err) {
+        console.error("EARLY ACCESS EMAIL: unexpected error —", err.message || "send error");
+      }
     }
 
     res.json({
