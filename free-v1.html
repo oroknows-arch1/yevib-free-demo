@@ -202,6 +202,40 @@
             </div>
           </div>
 
+          <section class="early-access-panel hidden" id="earlyAccessPanel" aria-hidden="true">
+            <div class="early-access-header">
+              <h4>Interested in paid YEVIB?</h4>
+              <p>Leave your details and we will reach out about early access to the full subscription tier.</p>
+            </div>
+
+            <form id="earlyAccessForm" class="early-access-form" novalidate>
+              <div class="early-access-grid">
+                <div>
+                  <label for="earlyAccessName">Name</label>
+                  <input id="earlyAccessName" name="name" type="text" autocomplete="name" required />
+                </div>
+                <div>
+                  <label for="earlyAccessEmail">Email</label>
+                  <input id="earlyAccessEmail" name="email" type="email" autocomplete="email" required />
+                </div>
+                <div>
+                  <label for="earlyAccessBusinessName">Business name <em>(optional)</em></label>
+                  <input id="earlyAccessBusinessName" name="businessName" type="text" autocomplete="organization" />
+                </div>
+                <div>
+                  <label for="earlyAccessWebsite">Website <em>(optional)</em></label>
+                  <input id="earlyAccessWebsite" name="website" type="url" autocomplete="url" />
+                </div>
+              </div>
+
+              <label for="earlyAccessMessage">Message <em>(optional)</em></label>
+              <textarea id="earlyAccessMessage" name="message" placeholder="Tell us what you would like YEVIB to help with next."></textarea>
+
+              <button type="submit" class="primary-btn" id="earlyAccessSubmitBtn">Request Early Access</button>
+              <p class="early-access-status hidden" id="earlyAccessStatus" role="status" aria-live="polite"></p>
+            </form>
+          </section>
+
           <section class="paid-yevib-panel">
   <div class="paid-yevib-header">
     <h4>Business readability + growth system</h4>

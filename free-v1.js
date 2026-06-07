@@ -150,6 +150,7 @@ function renderPostOptions(posts) {
   });
 
   renderReadyToUse();
+  showEarlyAccessPanel(freeV1Profile);
 }
 
 function setImageDirectionState(state = "idle") {
@@ -179,6 +180,98 @@ function renderVisualDirection(profile) {
 function renderReadyToUse() {
   const target = $("#selectedPostText");
   if (target) target.textContent = selectedPost || "Choose or generate a post first.";
+}
+
+function showEarlyAccessPanel(profile) {
+  const panel = $("#earlyAccessPanel");
+  if (!panel) return;
+
+  const businessNameInput = $("#earlyAccessBusinessName");
+  const websiteInput = $("#earlyAccessWebsite");
+
+  if (businessNameInput && !businessNameInput.value) {
+    businessNameInput.value = getBusinessName(profile);
+  }
+
+  if (websiteInput && !websiteInput.value) {
+    websiteInput.value = getBusinessUrl();
+  }
+
+  panel.classList.remove("hidden");
+  panel.setAttribute("aria-hidden", "false");
+}
+
+function setEarlyAccessStatus(message, type = "") {
+  const status = $("#earlyAccessStatus");
+  if (!status) return;
+
+  status.textContent = message;
+  status.classList.remove("hidden", "success", "error");
+
+  if (message) {
+    status.classList.add(type);
+  } else {
+    status.classList.add("hidden");
+  }
+}
+
+async function submitEarlyAccessForm(event) {
+  event.preventDefault();
+
+  const form = $("#earlyAccessForm");
+  const button = $("#earlyAccessSubmitBtn");
+  if (!form || !button) return;
+
+  const name = ($("#earlyAccessName")?.value || "").trim();
+  const email = ($("#earlyAccessEmail")?.value || "").trim();
+  const businessName = ($("#earlyAccessBusinessName")?.value || "").trim();
+  const website = ($("#earlyAccessWebsite")?.value || "").trim();
+  const message = ($("#earlyAccessMessage")?.value || "").trim();
+
+  if (!name || !email) {
+    setEarlyAccessStatus("Name and email are required.", "error");
+    return;
+  }
+
+  const originalText = button.innerHTML;
+  button.disabled = true;
+  button.innerHTML = "Sending request...";
+  setEarlyAccessStatus("");
+
+  try {
+    const res = await fetch("/early-access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        email,
+        businessName,
+        website,
+        message,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to submit early access request.");
+    }
+
+    form.reset();
+    if ($("#earlyAccessBusinessName")) {
+      $("#earlyAccessBusinessName").value = businessName;
+    }
+    if ($("#earlyAccessWebsite")) {
+      $("#earlyAccessWebsite").value = website;
+    }
+
+    setEarlyAccessStatus("Thanks — we received your request and will be in touch about early access.", "success");
+  } catch (err) {
+    setEarlyAccessStatus(err.message, "error");
+  } finally {
+    button.disabled = false;
+    button.innerHTML = originalText;
+  }
 }
 
 async function generateDemoImage(button) {
@@ -360,6 +453,11 @@ setActiveStep(next);
 const generateDemoImageBtn = $("#generateDemoImageBtn");
 if (generateDemoImageBtn) {
   generateDemoImageBtn.addEventListener("click", () => generateDemoImage(generateDemoImageBtn));
+}
+
+const earlyAccessForm = $("#earlyAccessForm");
+if (earlyAccessForm) {
+  earlyAccessForm.addEventListener("submit", submitEarlyAccessForm);
 }
 
 setReadState("idle");

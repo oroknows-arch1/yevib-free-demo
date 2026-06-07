@@ -144,6 +144,16 @@ const imageGenerationLimiter = createAiLimiter(
   "Free demo image generation limit reached. Please try again later."
 );
 
+const earlyAccessLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Too many early access requests. Please try again later.",
+  },
+});
+
 const HARD_CAPS = Object.freeze({
   businessUrl: 500,
   pastedSourceText: 8000,
@@ -276,6 +286,7 @@ const PORT = process.env.PORT || 3000;
 const maxChars = 500;
 
 const OWNER_KB_PATH = path.join(__dirname, "owner-kb.json");
+const EARLY_ACCESS_LEADS_PATH = path.join(__dirname, "early-access-leads.json");
 const PHASE3_TEST_MATRIX_PATH = path.join(__dirname, "phase3-test-matrix.json");
 function cleanText(value, maxLength = 1000) {
   if (typeof value !== "string") return "";
@@ -284,6 +295,47 @@ function cleanText(value, maxLength = 1000) {
     .replace(/[<>]/g, "")
     .trim()
     .slice(0, maxLength);
+}
+
+function isValidEmail(value = "") {
+  const email = String(value).trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function ensureEarlyAccessLeadsFile() {
+  if (!fs.existsSync(EARLY_ACCESS_LEADS_PATH)) {
+    fs.writeFileSync(
+      EARLY_ACCESS_LEADS_PATH,
+      JSON.stringify({ leads: [] }, null, 2),
+      "utf8"
+    );
+  }
+}
+
+function readEarlyAccessLeads() {
+  ensureEarlyAccessLeadsFile();
+  try {
+    const raw = fs.readFileSync(EARLY_ACCESS_LEADS_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed.leads)) {
+      return { leads: [] };
+    }
+    return parsed;
+  } catch {
+    return { leads: [] };
+  }
+}
+
+function writeEarlyAccessLeads(data) {
+  ensureEarlyAccessLeadsFile();
+  fs.writeFileSync(EARLY_ACCESS_LEADS_PATH, JSON.stringify(data, null, 2), "utf8");
+}
+
+function saveEarlyAccessLead(lead) {
+  const data = readEarlyAccessLeads();
+  data.leads.push(lead);
+  writeEarlyAccessLeads(data);
+  return data.leads.length;
 }
 
 function cleanNumber(value, fallback = 1, min = 1, max = 50) {
@@ -6087,6 +6139,49 @@ function enforceFinalQuietRules(posts = [], category = "") {
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "free-v1.html"));
+});
+
+app.post("/early-access", earlyAccessLimiter, rejectBadBody, async (req, res) => {
+  try {
+    const body = req.body || {};
+
+    const name = cleanText(body.name, 120);
+    const email = cleanText(body.email, 254);
+    const businessName = cleanText(body.businessName, 120);
+    const website = cleanText(body.website, 500);
+    const message = cleanText(body.message, 2000);
+
+    if (!name) {
+      return res.status(400).json({ error: "name is required." });
+    }
+
+    if (!email) {
+      return res.status(400).json({ error: "email is required." });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: "Invalid email address." });
+    }
+
+    const lead = {
+      name,
+      email,
+      businessName,
+      website,
+      message,
+      createdAt: new Date().toISOString(),
+    };
+
+    const leadCount = saveEarlyAccessLead(lead);
+
+    res.json({
+      ok: true,
+      leadCount,
+    });
+  } catch (err) {
+    console.error("EARLY ACCESS ERROR:", err);
+    res.status(500).json({ error: "Failed to save early access request." });
+  }
 });
 
 app.post("/save-owner-choice", blockProductionOnly, async (req, res) => {

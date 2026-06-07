@@ -970,3 +970,74 @@ li::before {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+.hidden {
+  display: none !important;
+}
+
+.early-access-panel {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  background: linear-gradient(135deg, #f8fbff, #eef5fb);
+}
+
+.early-access-header h4 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.early-access-header p {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.early-access-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+}
+
+.early-access-form input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  padding: 14px;
+  line-height: 1.45;
+  outline: 0;
+}
+
+.early-access-form label em {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.early-access-form .primary-btn {
+  margin-top: 8px;
+}
+
+.early-access-status {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.early-access-status.success {
+  color: #1f5f3f;
+}
+
+.early-access-status.error {
+  color: #9b2c2c;
+}
+
+@media (max-width: 760px) {
+  .early-access-grid {
+    grid-template-columns: 1fr;
+  }
+}
