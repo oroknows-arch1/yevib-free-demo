@@ -9,8 +9,9 @@ const path = require("path");
 const fs = require("fs");
 
 const app = express();
+const isDirectRun = require.main === module;
 
-if (!process.env.OPENAI_API_KEY) {
+if (isDirectRun && !process.env.OPENAI_API_KEY) {
   console.error("Missing required environment variable: OPENAI_API_KEY");
   process.exit(1);
 }
@@ -261,10 +262,14 @@ function validateBusinessUrl(req, res, next) {
   next();
 }
 
-validateEnvironment();
+if (isDirectRun) {
+  validateEnvironment();
+}
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey:
+    process.env.OPENAI_API_KEY ||
+    (isDirectRun ? undefined : "sk-test-voice-self-test-placeholder"),
 });
 
 const PORT = process.env.PORT || 3000;
@@ -5669,6 +5674,206 @@ function soundsTooGeneric(text = "") {
   return badPhrases.some((p) => lower.includes(p));
 }
 
+const GOVERNANCE_BANNED_PATTERNS = [
+  { type: "phrase", value: "a business does not always need", label: "a business does not always need" },
+  { type: "phrase", value: "when the source material is limited", label: "when the source material is limited" },
+  { type: "phrase", value: "good content should not outrun", label: "good content should not outrun" },
+  { type: "phrase", value: "source material", label: "source material" },
+  { type: "phrase", value: "proof that is not there", label: "proof that is not there" },
+  { type: "phrase", value: "review-ready", label: "review-ready" },
+  { type: "phrase", value: "safer move", label: "safer move" },
+  { type: "phrase", value: "content should", label: "content should" },
+  { type: "phrase", value: "generated post", label: "generated post" },
+  { type: "phrase", value: "business claim", label: "business claim" },
+  { type: "phrase", value: "source-backed", label: "source-backed" },
+  { type: "phrase", value: "approved claims", label: "approved claims" },
+  { type: "phrase", value: "approved claim", label: "approved claim" },
+  { type: "phrase", value: "review ready", label: "review ready" },
+  { type: "regex", value: /\bscan\b/i, label: "scan" },
+  { type: "regex", value: /\byevib\b/i, label: "YEVIB" },
+  { type: "regex", value: /\bevidence\b/i, label: "evidence" },
+  { type: "regex", value: /\b(the scan|our scan|this scan)\b/i, label: "the/our/this scan" },
+];
+
+function detectGovernanceLanguage(text = "") {
+  const cleaned = String(text || "");
+  const lower = cleaned.toLowerCase();
+  const reasons = [];
+
+  for (const pattern of GOVERNANCE_BANNED_PATTERNS) {
+    if (pattern.type === "phrase" && lower.includes(pattern.value)) {
+      reasons.push(`Banned phrase: "${pattern.label}"`);
+      continue;
+    }
+
+    if (pattern.type === "regex" && pattern.value.test(cleaned)) {
+      reasons.push(`Banned pattern: ${pattern.label}`);
+    }
+  }
+
+  return {
+    failed: reasons.length > 0,
+    reasons: uniqueStrings(reasons, 12),
+  };
+}
+
+function validatePostsAgainstGovernanceLanguage(posts = []) {
+  const reasons = [];
+
+  if (!Array.isArray(posts)) {
+    return { failed: true, reasons: ["Posts must be an array."] };
+  }
+
+  posts.forEach((post, index) => {
+    const check = detectGovernanceLanguage(post);
+    if (check.failed) {
+      check.reasons.forEach((reason) => {
+        reasons.push(`Post ${index + 1}: ${reason}`);
+      });
+    }
+  });
+
+  return {
+    failed: reasons.length > 0,
+    reasons: uniqueStrings(reasons, 24),
+  };
+}
+
+function buildFallbackHashtags(businessName = "", category = "", offers = []) {
+  const cleanName = String(businessName || "Brand")
+    .replace(/[^a-zA-Z0-9 ]/g, " ")
+    .trim();
+
+  const brandTag =
+    "#" +
+    (cleanName
+      ? cleanName
+          .split(/\s+/)
+          .slice(0, 2)
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+          .join("")
+      : "YourBrand");
+
+  const offerSeed = normalizeStringArray(offers, 1)[0] || category || "LocalBusiness";
+  const nicheTag =
+    "#" +
+    String(offerSeed)
+      .replace(/[^a-zA-Z0-9 ]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join("");
+
+  const frameTag =
+    "#" +
+    String(category || "SmallBusiness")
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .replace(/([a-z])([A-Z])/g, "$1$2");
+
+  return `${brandTag} ${nicheTag || "#LocalBusiness"} ${frameTag || "#SmallBusiness"}`
+    .replace(/#Yevib\b/gi, "#LocalBusiness")
+    .replace(/#YEVIB\b/g, "#LocalBusiness");
+}
+
+function extractOwnerOpener(manualVoiceInput = "") {
+  const cleaned = String(manualVoiceInput || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+
+  const firstSentenceMatch = cleaned.match(/^[^.!?]+[.!?]?/);
+  return clipText(firstSentenceMatch ? firstSentenceMatch[0].trim() : cleaned, 180);
+}
+
+function getFallbackCategoryAngle(category = "") {
+  const angles = {
+    "Daily Relief": "the small frictions that make a day harder than it needs to be",
+    "Everyday Ritual": "the routines people lean on when life stays busy",
+    "Founder Reflection": "why we keep showing up for this work",
+    "Product in Real Life": "where a useful product or service actually shows up in real life",
+    "Quiet Value": "the subtle difference people notice once something works properly",
+    "Standards and Care": "why doing the job properly still matters",
+    "Busy Day Ease": "how a packed day feels when one thing is handled properly",
+    "Small Moment Real Value": "the ordinary moments where good service actually shows",
+    "Something Real": "the everyday problem this kind of business exists to solve",
+  };
+
+  return angles[category] || angles["Something Real"];
+}
+
+function buildUltraSafeOwnerFallbackPosts({
+  businessName = "our business",
+  category = "Something Real",
+  offers = [],
+} = {}) {
+  const name = String(businessName || "our business").trim();
+  const tags = buildFallbackHashtags(businessName, category, offers);
+  const angle = getFallbackCategoryAngle(category);
+
+  return [
+    `We keep our focus simple at ${name}: help people understand ${angle} without making the message bigger than it needs to be.\n\n${tags}`,
+    `If you are trying to work out the next sensible step, we would rather explain it plainly than dress it up.\n\n${tags}`,
+    `That is the standard we hold ourselves to. Clear help, plain language, and no promises we cannot stand behind.\n\n${tags}`,
+  ];
+}
+
+function buildSafeFallbackPosts({
+  category = "Something Real",
+  businessName = "Your Brand",
+  manualVoiceInput = "",
+  voiceProfile = null,
+  businessSummary = "",
+  offers = [],
+} = {}) {
+  const name = String(businessName || "our business").trim();
+  const ownerText = String(manualVoiceInput || "").replace(/\s+/g, " ").trim();
+  const summary = String(businessSummary || "").replace(/\s+/g, " ").trim();
+  const offerList = normalizeStringArray(offers, 3);
+  const primaryOffer = offerList[0] || "what we help with";
+  const tags = buildFallbackHashtags(businessName, category, offerList);
+  const angle = getFallbackCategoryAngle(category);
+  const opener = extractOwnerOpener(ownerText);
+  const toneHint = normalizeStringArray(voiceProfile?.tone, 1)[0] || "plain";
+
+  let posts = [];
+
+  if (ownerText.length >= 40) {
+    const summaryLine = summary
+      ? clipText(summary, 200)
+      : `We focus on ${primaryOffer} in a way people can actually follow.`;
+
+    posts = [
+      `${opener} That is still how we think about ${angle}.\n\n${tags}`,
+      `We try to keep this ${toneHint} and useful. ${summaryLine}\n\n${tags}`,
+      `If ${angle} is on your mind, we would rather talk it through plainly than promise something we cannot stand behind.\n\n${tags}`,
+    ];
+  } else {
+    posts = [
+      `At ${name}, we try to make ${angle} easier to understand without overcomplicating it.\n\n${tags}`,
+      summary
+        ? `${clipText(summary, 220)}\n\n${tags}`
+        : `We focus on ${primaryOffer} and keep the explanation practical.\n\n${tags}`,
+      `If you are weighing up options around ${angle}, we are happy to keep the conversation grounded and clear.\n\n${tags}`,
+    ];
+  }
+
+  let governanceCheck = validatePostsAgainstGovernanceLanguage(posts);
+  if (governanceCheck.failed) {
+    posts = buildUltraSafeOwnerFallbackPosts({ businessName, category, offers });
+    governanceCheck = validatePostsAgainstGovernanceLanguage(posts);
+  }
+
+  if (governanceCheck.failed) {
+    posts = [
+      "We try to explain things plainly and stay useful for the people we serve.\n\n#YourBrand #LocalBusiness #SmallBusiness",
+      "If you are weighing up options, we would rather give you a clear picture than a big promise.\n\n#YourBrand #LocalHelp #SmallBusiness",
+      "That is the standard we hold ourselves to: plain language, practical help, and no unnecessary noise.\n\n#YourBrand #PlainTalk #SmallBusiness",
+    ];
+  }
+
+  return posts.slice(0, 3);
+}
+
 function parseGeneratedPosts(rawText = "") {
   const text = String(rawText || "").trim();
   if (!text) return [];
@@ -5721,17 +5926,7 @@ function parseGeneratedPosts(rawText = "") {
   return [];
 }
 
-function buildSafeFallbackPosts(category = "Something Real") {
-  return [
-    "A business does not always need a bigger claim to make better content. Sometimes the strongest move is to explain one simple thing clearly, stay useful, and let people understand the value without forcing the message.\n\n#YEVIB #SmallBusiness #Content",
-
-    "When the source material is limited, the safer move is to keep the post educational instead of pretending there is proof that is not there. Clear, honest content still gives people something useful to connect with.\n\n#YEVIB #BusinessTrust #Marketing",
-
-    "Good content should not outrun what the business has actually shown. If the scan cannot safely support a specific claim, YEVIB should keep the message grounded, simple, and review-ready.\n\n#YEVIB #OwnerVoice #ReviewBeforeUse"
-  ];
-}
-
-async function generatePostsWithRetry(promptBase, category) {
+async function generatePostsWithRetry(promptBase, category, voiceContext = {}) {
   let retryReason = "";
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -5863,7 +6058,14 @@ You must correct this now:
   reason: retryReason || "Unknown output enforcement failure."
 });
 
-return buildSafeFallbackPosts(category);
+return buildSafeFallbackPosts({
+    category,
+    businessName: voiceContext.businessName,
+    manualVoiceInput: voiceContext.manualVoiceInput,
+    voiceProfile: voiceContext.voiceProfile,
+    businessSummary: voiceContext.businessSummary,
+    offers: voiceContext.offers,
+  });
 }
 
 
@@ -9972,9 +10174,10 @@ function validateAgainstRecentPostHistory(posts = [], recentChosenPosts = []) {
 async function generatePostsWithHistoryGuard(
   promptBase,
   category,
-  recentChosenPosts = []
+  recentChosenPosts = [],
+  voiceContext = {}
 ) {
-  let posts = await generatePostsWithRetry(promptBase, category);
+  let posts = await generatePostsWithRetry(promptBase, category, voiceContext);
 
   if (!recentChosenPosts.length) {
     return posts;
@@ -10036,7 +10239,11 @@ STRICT CORRECTION:
 - do not paraphrase the same beginning or same idea path with minor word swaps
 `.trim();
 
-  posts = await generatePostsWithRetry(`${promptBase}\n\n${historyRetryBlock}`, category);
+  posts = await generatePostsWithRetry(
+    `${promptBase}\n\n${historyRetryBlock}`,
+    category,
+    voiceContext
+  );
   return posts;
 }
 
@@ -10539,7 +10746,15 @@ const recentChosenPosts = getRecentChosenPostsForBusiness(finalBusinessName, 6);
 let posts = await generatePostsWithHistoryGuard(
   prompt,
   category,
-  recentChosenPosts
+  recentChosenPosts,
+  {
+    businessName: finalBusinessName,
+    manualVoiceInput,
+    voiceProfile,
+    businessSummary:
+      initialProfile?.businessProfile?.summary || businessSummary || "",
+    offers: initialProfile?.brandProductTruth?.offers || [],
+  }
 );
 
     if (posts.length < 3) {
@@ -11415,16 +11630,25 @@ NON-NEGOTIABLE IMAGE SAFETY RULES:
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+if (isDirectRun) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 
-  if (
-    process.env.NODE_ENV !== "production" &&
-    process.argv.includes("--ubdg-self-test")
-  ) {
-    runUbdgEvidenceHelperSelfTest().catch((err) => {
-      console.error("UBDG SELF TEST ERROR:", err);
-      process.exitCode = 1;
-    });
-  }
-});
+    if (
+      process.env.NODE_ENV !== "production" &&
+      process.argv.includes("--ubdg-self-test")
+    ) {
+      runUbdgEvidenceHelperSelfTest().catch((err) => {
+        console.error("UBDG SELF TEST ERROR:", err);
+        process.exitCode = 1;
+      });
+    }
+  });
+}
+
+module.exports = {
+  GOVERNANCE_BANNED_PATTERNS,
+  detectGovernanceLanguage,
+  validatePostsAgainstGovernanceLanguage,
+  buildSafeFallbackPosts,
+};
