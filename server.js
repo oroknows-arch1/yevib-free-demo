@@ -10514,6 +10514,10 @@ const ownerKbContext = summarizeOwnerKbForPrompt(finalBusinessName);
           .join("\n")
       : "- No specific approved claims available.";
 
+    const hasManualVoiceInput = Boolean(
+      String(manualVoiceInput || "").replace(/\s+/g, " ").trim()
+    );
+
     const prompt = `
 Create exactly 3 X posts.
 
@@ -10592,8 +10596,23 @@ ${clipText(weeklyPosts || "No weekly notes provided", 2000)}
 RECENT POSTS TO AVOID COPYING:
 ${previousPosts || "No previous posts stored yet."}
 
+${hasManualVoiceInput ? `
+RAW OWNER VOICE AUTHORITY:
+- MANUAL VOICE INPUT (in PROFILE CONTEXT above) is the primary style authority for tone, rhythm, phrasing, opener shape, and point of view across all 3 posts.
+- Mirror actual wording patterns from MANUAL VOICE INPUT where claim-safe: sentence length, directness, informal register, and characteristic phrases must survive generation.
+- Preserve lived phrasing such as "mate", "reckon", "had a look", and "straight talk" when they appear in MANUAL VOICE INPUT. Do not polish them into neutral brand language.
+- Claim safety governs facts only. Weak or thin approved claims mean fewer specific proof statements — not smoother, corporate, or third-person voice.
+- If any instruction below conflicts with MANUAL VOICE INPUT on tone or wording, follow MANUAL VOICE INPUT.
+
+VOICE PROFILE (SECONDARY — supporting traits only):
+` : `
 VOICE PROFILE:
-${buildVoiceInstructions(voiceProfile)}
+`}${buildVoiceInstructions(voiceProfile)}${hasManualVoiceInput ? `
+VOICE PROFILE SUBORDINATION:
+- Use VOICE PROFILE only where MANUAL VOICE INPUT does not already set tone, rhythm, or phrasing.
+- Do not let VOICE PROFILE neutralize, flatten, or replace the owner's lived voice.
+- Do not convert conversational owner language into category-level lecturing or cautious brand narration.
+` : ""}
 
 CORE RULE:
 All 3 posts must sound like the SAME business voice.
