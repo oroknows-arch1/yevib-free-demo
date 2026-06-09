@@ -6183,13 +6183,65 @@ function extractConfirmedLocationFromSummary(summary = "") {
   return "";
 }
 
+function sanitizeFallbackOfferText(offer = "") {
+  let text = String(offer || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+
+  text = text.replace(/\.+$/g, "").trim();
+
+  const servicePatterns = [
+    /\b(emergency plumbing(?: services)?)\b/i,
+    /\b((?:tailored\s+)?plumbing solutions?)\b/i,
+    /\b(plumbing repairs?(?: and installations?)?)\b/i,
+    /\b(bathroom repairs?)\b/i,
+    /\b(blocked drains?)\b/i,
+    /\b(hot water(?: systems?)?)\b/i,
+    /\b(pipe repairs?)\b/i,
+    /\b(installations?)\b/i,
+    /\b(expert advice and quotations?)\b/i,
+    /\b(quotations?|quotes?)\b/i,
+    /\b(expert advice)\b/i,
+    /\b(early childhood learning)\b/i,
+    /\b(day care|daycare)\b/i,
+    /\b(haircuts?)\b/i,
+    /\b(beard shaping)\b/i,
+    /\b(precision fades?)\b/i,
+    /\b(routine checkups?)\b/i,
+    /\b(dental care)\b/i,
+    /\b(protein)\b/i,
+    /\b(recovery supplements?)\b/i,
+  ];
+
+  for (const pattern of servicePatterns) {
+    const match = text.match(pattern);
+    if (match) return match[1].toLowerCase();
+  }
+
+  if (text.length > 48 || /\b(without obligation|balancing quality|rapid response|cost-effectiveness|availability)\b/i.test(text)) {
+    const clause = text.split(/\bwith\b|\bbalancing\b|\bwithout\b/i)[0].trim();
+    const clipped = clipText(clause, 48).replace(/\.+$/g, "").trim();
+    if (clipped) return clipped.charAt(0).toLowerCase() + clipped.slice(1);
+  }
+
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+function normalizeFallbackOffers(offers = []) {
+  return uniqueStrings(
+    normalizeStringArray(offers, 4)
+      .map(sanitizeFallbackOfferText)
+      .filter(Boolean),
+    3
+  );
+}
+
 function inferFallbackDomain(evidenceText = "") {
   const lower = String(evidenceText || "").toLowerCase();
 
   if (/\b(childcare|early childhood|kindergarten|daycare|day care|preschool|ece)\b/.test(lower)) {
     return "childcare";
   }
-  if (/\b(plumb|drain|pipe|hot water|bathroom repair|callout|blocked drain)\b/.test(lower)) {
+  if (/\b(plumbing|plumber|plumb|drain|pipe|hot water|bathroom repair|callout|blocked drain)\b/.test(lower)) {
     return "plumbing";
   }
   if (/\b(barber|barbershop|haircut|fade|beard|grooming)\b/.test(lower)) {
@@ -6213,7 +6265,7 @@ function extractFallbackEvidence({
 } = {}) {
   const name = String(businessName || "our business").trim();
   const summary = String(businessSummary || "").replace(/\s+/g, " ").trim();
-  const offerList = normalizeStringArray(offers, 3);
+  const offerList = normalizeFallbackOffers(offers);
   const locationText = String(location || extractConfirmedLocationFromSummary(summary) || "").trim();
   const evidenceText = `${summary} ${offerList.join(" ")}`.trim();
 
@@ -6251,11 +6303,11 @@ function padEvidenceFallbackPosts(evidence = {}, bodies = []) {
       continue;
     }
     if (posts.length === 1 && secondaryOffer) {
-      posts.push(`${name} also covers ${secondaryOffer}${locationSuffix}.`);
+      posts.push(`${name} also lists ${secondaryOffer}${locationSuffix}.`);
       continue;
     }
     if (posts.length === 1 && primaryOffer) {
-      posts.push(`${name} lists ${primaryOffer} as a confirmed service${locationSuffix}.`);
+      posts.push(`${name} lists ${primaryOffer}${locationSuffix}.`);
       continue;
     }
     if (primaryOffer) {
@@ -6291,11 +6343,11 @@ function composeDomainFallbackPosts(evidence = {}, opener = "") {
   if (opener) {
     if (domain === "plumbing") {
       return padEvidenceFallbackPosts(evidence, [
-        `${opener} That is the approach behind ${name}'s ${primaryOffer || "plumbing"} work.`,
+        `${opener} That is the approach behind ${name}'s plumbing work.`,
         summaryLine || `${name} handles ${primaryOffer || "local plumbing jobs"}${loc}.`,
         secondaryOffer
-          ? `Homeowners looking at ${primaryOffer} or ${secondaryOffer} can contact ${name} for a clear quote on the job.`
-          : `${name} covers ${primaryOffer || "common plumbing jobs"} for local homes${loc}.`,
+          ? `Homeowners can contact ${name} about ${primaryOffer || "plumbing repairs"} or ${secondaryOffer}${loc}.`
+          : `${name} handles ${primaryOffer || "local plumbing jobs"} for Sydney homes${loc}.`,
       ]);
     }
 
@@ -6303,7 +6355,7 @@ function composeDomainFallbackPosts(evidence = {}, opener = "") {
       `${opener} That is still how we run ${name}${primaryOffer ? ` around ${primaryOffer}` : ""}.`,
       summaryLine || `${name} works on ${primaryOffer || "confirmed services"}${loc}.`,
       secondaryOffer
-        ? `${name} covers ${primaryOffer} and ${secondaryOffer}${loc}.`
+        ? `${name} lists ${primaryOffer} and ${secondaryOffer}${loc}.`
         : `${name} lists ${primaryOffer || "confirmed services"}${loc}.`,
     ]);
   }
@@ -6325,14 +6377,25 @@ function composeDomainFallbackPosts(evidence = {}, opener = "") {
   }
 
   if (domain === "plumbing") {
+    const services = uniqueStrings(
+      [primaryOffer, secondaryOffer, tertiaryOffer].filter(Boolean),
+      3
+    );
+    const serviceA = services[0] || "plumbing repairs";
+    const serviceB = services[1] || "installations";
+    const serviceC =
+      services.find((service) => service !== serviceA && service !== serviceB) ||
+      services[2] ||
+      "plumbing callouts";
+
     return padEvidenceFallbackPosts(evidence, [
-      summaryLine || `${name} handles ${primaryOffer || "plumbing work"}${loc}.`,
-      primaryOffer
-        ? `${name} takes on ${primaryOffer}${secondaryOffer ? ` and ${secondaryOffer}` : ""}${loc}.`
-        : `${name} covers local plumbing jobs${loc}.`,
-      secondaryOffer
-        ? `Homeowners needing ${secondaryOffer} can reach ${name}${loc}.`
-        : `${name} lists ${primaryOffer || "plumbing services"}${loc}.`,
+      summaryLine || `${name} handles ${serviceA}${loc}.`,
+      serviceB
+        ? `${name} takes on ${serviceA} and ${serviceB}${loc}.`
+        : `${name} handles ${serviceA}${loc}.`,
+      serviceC && serviceC !== serviceB
+        ? `Homeowners can contact ${name} about ${serviceC}${loc}.`
+        : `${name} lists ${serviceA}${loc}.`,
     ]);
   }
 
@@ -6374,21 +6437,23 @@ function composeDomainFallbackPosts(evidence = {}, opener = "") {
         : `${name} focuses on supplement retail${loc}.`,
       tertiaryOffer
         ? `${name} also lists ${tertiaryOffer}${loc}.`
-        : `${name} covers recovery and training nutrition${loc}.`,
+        : secondaryOffer
+        ? `${name} also lists ${secondaryOffer}${loc}.`
+        : `${name} lists ${primaryOffer || "supplements"}${loc}.`,
     ]);
   }
 
   return padEvidenceFallbackPosts(evidence, [
     summaryLine || `${name} offers ${primaryOffer || "confirmed services"}${loc}.`,
     primaryOffer && secondaryOffer
-      ? `${name} covers ${primaryOffer} and ${secondaryOffer}${loc}.`
+      ? `${name} lists ${primaryOffer} and ${secondaryOffer}${loc}.`
       : primaryOffer
       ? `${name} lists ${primaryOffer}${loc}.`
       : `${name} shares confirmed business information${loc}.`,
     tertiaryOffer
-      ? `${name} also handles ${tertiaryOffer}${loc}.`
+      ? `${name} also lists ${tertiaryOffer}${loc}.`
       : secondaryOffer
-      ? `${name} also covers ${secondaryOffer}${loc}.`
+      ? `${name} also lists ${secondaryOffer}${loc}.`
       : `${name}${loc ? ` serves customers${loc}` : " stays grounded in confirmed website information"}.`,
   ]);
 }

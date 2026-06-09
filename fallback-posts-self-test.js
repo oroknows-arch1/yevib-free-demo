@@ -94,6 +94,34 @@ runTest("childcare fallback sounds like childcare not barbering", () => {
   assert.ok(!/haircut|fade|beard/i.test(combined));
 });
 
+runTest("quintessential plumbing avoids pasted marketing offer blobs", () => {
+  const posts = postBodies(
+    buildCase({
+      category: "Standards and Care",
+      businessName: "Quintessential Plumbing",
+      businessSummary:
+        "Quintessential Plumbing is a trusted Sydney-based plumbing service offering reliable, affordable, and prompt plumbing repairs and installations with 24/7 emergency support.",
+      offers: [
+        "Tailored plumbing solutions at affordable rates balancing quality and cost-effectiveness.",
+        "Free expert advice and quotations without obligation.",
+        "Emergency plumbing services with rapid response and 24/7 availability.",
+      ],
+    })
+  );
+
+  assert.strictEqual(posts.length, 3);
+  assertNoBannedFallbackPhrases(posts);
+
+  const combined = posts.join("\n");
+  assert.ok(!/covers Tailored plumbing/i.test(combined));
+  assert.ok(!/balancing quality and cost-effectiveness/i.test(combined));
+  assert.ok(!/without obligation/i.test(combined));
+  assert.ok(!/rapid response and 24\/7 availability/i.test(combined));
+  assert.ok(!/\.\./.test(combined));
+  assert.ok(/Quintessential Plumbing/i.test(combined));
+  assert.ok(/plumb|repair|installation|quote|emergency/i.test(combined.toLowerCase()));
+});
+
 runTest("plumbing fallback sounds like plumbing and keeps owner opener", () => {
   const posts = postBodies(
     buildCase({
