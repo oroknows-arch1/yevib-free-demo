@@ -5,7 +5,9 @@
   "main": "app.js",
   "scripts": {
     "start": "node server.js",
-    "test:voice": "node voice-dominance-self-test.js"
+    "test:voice": "node voice-dominance-self-test.js",
+    "test:owner-sample": "node owner-sample-style-self-test.js",
+    "test:businesses": "YEVIB_BUSINESS_TEST_HARNESS=1 node business-test-harness.js"
   },
   "keywords": [],
   "author": "",

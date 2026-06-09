@@ -1,0 +1,25 @@
+{
+  "tests": [
+    {
+      "businessName": "Sydney Animal Hospitals",
+      "businessUrl": "https://www.sydneyanimalhospitals.com.au/",
+      "founderGoal": "Improve posting consistency",
+      "ownerVoiceSample": "How ya going, just keeping things simple and helping people understand what matters before it becomes a bigger problem.",
+      "misunderstandingOrContext": "Watch for unsupported claims around emergency care, advanced treatments, personalised care, latest technology unless the website proves it."
+    },
+    {
+      "businessName": "Chatswood Veterinary Clinic",
+      "businessUrl": "https://www.chatswoodvet.com.au/",
+      "founderGoal": "Build more trust with local pet owners",
+      "ownerVoiceSample": "Hey mate, most people just want it explained properly without all the stress. Keep it simple and clear.",
+      "misunderstandingOrContext": "Watch for inflated claims like best vet, emergency service, specialist care, or guaranteed outcomes."
+    },
+    {
+      "businessName": "UPTOWN Barbers",
+      "businessUrl": "https://www.uptownbarbers.com.au/",
+      "founderGoal": "Get more bookings from local clients",
+      "ownerVoiceSample": "How ya going bro, we keep it sharp, simple and make sure people walk out feeling good.",
+      "misunderstandingOrContext": "Watch for unsupported luxury, award, or best barber claims unless confirmed by website."
+    }
+  ]
+}

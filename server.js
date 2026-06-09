@@ -86,6 +86,10 @@ const globalLimiter = rateLimit({
 });
 
 function createAiLimiter(max, message) {
+  if (process.env.YEVIB_BUSINESS_TEST_HARNESS === "1") {
+    return (req, res, next) => next();
+  }
+
   return rateLimit({
     windowMs: 60 * 60 * 1000,
     max,
@@ -2804,11 +2808,14 @@ OWNER KNOWLEDGE BASE:
     .map((entry, i) => `Recent chosen post ${i + 1}: ${clipText(entry.chosenPost || "", 220)}`)
     .join("\n");
 
-  const ownerWritingSnippets = entries
+  const ownerStyleProfiles = entries
     .map((entry) => entry.ownerWritingSample)
     .filter(Boolean)
     .slice(-2)
-    .map((text, i) => `Owner writing sample ${i + 1}: ${clipText(text, 220)}`)
+    .map((text, i) => {
+      const profile = buildOwnerVoiceStyleProfile(text);
+      return `Owner style profile ${i + 1}: ${profile ? profile.tone.join(", ") : "unavailable"}; rhythm=${profile?.rhythm || "unknown"}; casualness=${profile?.casualness || "unknown"}`;
+    })
     .join("\n");
 
   return `
@@ -2819,10 +2826,11 @@ OWNER KNOWLEDGE BASE:
 - Most common founder goals recently: ${topGoals || "none yet"}
 - Preferred chosen-post length trend: ${preferredLengthBand}
 ${recentPostSnippets ? `- Recent chosen post patterns:\n${recentPostSnippets}` : ""}
-${ownerWritingSnippets ? `- Owner-written text remembered:\n${ownerWritingSnippets}` : ""}
+${ownerStyleProfiles ? `- Owner style profiles remembered (style only, not sample content):\n${ownerStyleProfiles}` : ""}
 
 OWNER KB RULE:
-- Learn from these patterns, but do NOT trap the owner inside their usual pattern
+- Learn style patterns only (tone, rhythm, casualness), never factual topics from saved owner samples
+- Do NOT trap the owner inside their usual pattern
 - If today's feeling, current lens, or current founder goal points somewhere different, respect that
 - Current state can override baseline tone, but not owner identity
 `.trim();
@@ -3585,12 +3593,16 @@ function chooseVoiceSourceText({
   const summaryClean = clipText(sourceProfileSummary || "", 1000);
 
   if (mode === "manual") {
-    return manualClean || pastedClean || founderClean || productClean || summaryClean;
+    if (manualClean && !isStyleOnlyOwnerSample(manualClean)) return manualClean;
+    if (pastedClean && !isStyleOnlyOwnerSample(pastedClean)) return pastedClean;
+    return founderClean || productClean || summaryClean;
   }
 
   if (mode === "hybrid") {
-    if (manualClean) return manualClean;
-    if (pastedClean && !looksLikeTestimonial(pastedClean)) return pastedClean;
+    if (manualClean && !isStyleOnlyOwnerSample(manualClean)) return manualClean;
+    if (pastedClean && !looksLikeTestimonial(pastedClean) && !isStyleOnlyOwnerSample(pastedClean)) {
+      return pastedClean;
+    }
     if (founderClean && !looksLikeTestimonial(founderClean)) return founderClean;
     return [summaryClean, productClean, customerClean ? `Customer signals:\n${customerClean}` : ""]
       .filter(Boolean)
@@ -3732,6 +3744,198 @@ function inferSourceConfidence({
   if (score >= 5) return "high";
   if (score >= 3) return "medium";
   return "low";
+}
+
+function isStyleOnlyOwnerSample(text = "") {
+  const cleaned = String(text || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return false;
+
+  const lower = cleaned.toLowerCase();
+  const businessSignals =
+    /\b(business|company|service|services|product|products|customer|customers|we started|our business|we offer|we provide|we help|clients?|supplement|plumbing|shop|store)\b/i;
+
+  if (businessSignals.test(lower)) return false;
+
+  const personalChatSignals =
+    /\b(mate|bro|aye|family|workout|burpees?|catch up|been a while|you been good|try again later|pumping)\b/i;
+  const questionHeavy = (cleaned.match(/\?/g) || []).length >= 2;
+
+  return (
+    personalChatSignals.test(lower) ||
+    (questionHeavy && cleaned.length < 500 && !businessSignals.test(lower))
+  );
+}
+
+function extractQuarantinedSamplePhrases(ownerWritingSample = "") {
+  const cleaned = String(ownerWritingSample || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return { bannedPhrases: [], bannedTopics: [] };
+
+  const sentences = cleaned
+    .split(/[.!?]+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 6);
+
+  const bannedPhrases = [];
+
+  for (const sentence of sentences) {
+    bannedPhrases.push(sentence.toLowerCase());
+
+    const words = sentence.toLowerCase().split(/\s+/).filter(Boolean);
+    for (let i = 0; i < words.length - 2; i += 1) {
+      const trigram = words.slice(i, i + 3).join(" ");
+      if (trigram.length >= 12) bannedPhrases.push(trigram);
+    }
+    for (let i = 0; i < words.length - 3; i += 1) {
+      const quad = words.slice(i, i + 4).join(" ");
+      if (quad.length >= 16) bannedPhrases.push(quad);
+    }
+  }
+
+  const topicMatches = cleaned.match(
+    /\b(?:family|workouts?|burpees?|catch[\s-]?up|pumping(?:\s+the)?\s+burpees?|aye\s+bro|try\s+again\s+later|you\s+been\s+good)\b/gi
+  );
+
+  return {
+    bannedPhrases: uniqueStrings(bannedPhrases, 40),
+    bannedTopics: uniqueStrings((topicMatches || []).map((match) => match.toLowerCase()), 20),
+  };
+}
+
+function buildOwnerVoiceStyleProfile(ownerWritingSample = "") {
+  const cleaned = String(ownerWritingSample || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return null;
+
+  const quarantine = extractQuarantinedSamplePhrases(cleaned);
+  const sentences = cleaned
+    .split(/[.!?]+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  const avgWordsPerSentence = sentences.length ? words.length / sentences.length : words.length;
+  const lower = cleaned.toLowerCase();
+
+  const tone = [];
+  if (/\bmate\b|\bbro\b|\baye\b/i.test(cleaned)) tone.push("mate-to-mate casual");
+  if ((cleaned.match(/\?/g) || []).length >= 2) tone.push("conversational question-led");
+  if (avgWordsPerSentence <= 8) tone.push("short-sentence rhythm");
+  if (!/\b(therefore|furthermore|accordingly|pursuant)\b/i.test(cleaned)) tone.push("plain-spoken");
+  if (/\bhey\b/i.test(cleaned)) tone.push("informal greeting");
+  if (!tone.length) tone.push("friendly", "direct");
+
+  const rhythm =
+    avgWordsPerSentence <= 7
+      ? "staccato, short bursts"
+      : avgWordsPerSentence <= 12
+      ? "mixed short and medium"
+      : "longer flowing sentences";
+
+  const casualness = /\b(mate|bro|aye|reckon|yeah|nah)\b/i.test(cleaned)
+    ? "informal, conversational"
+    : /\b(please|kindly|regarding|pursuant)\b/i.test(cleaned)
+    ? "formal"
+    : "neutral-casual";
+
+  const greetingStyle = /\bhey mate\b/i.test(cleaned)
+    ? "informal direct address"
+    : /\b(hi|hello)\b/i.test(cleaned)
+    ? "standard friendly opener"
+    : "no distinctive greeting pattern";
+
+  const punctuationHabits = [];
+  if ((cleaned.match(/\?/g) || []).length >= 2) punctuationHabits.push("frequent question marks");
+  if (sentences.length >= 2 && !/\.\.\./.test(cleaned)) {
+    punctuationHabits.push("period-separated short sentences");
+  }
+  if (/,/.test(cleaned)) punctuationHabits.push("uses commas for clause breaks");
+
+  const vocabularyStyle = [];
+  if (/\bmate\b/i.test(cleaned)) vocabularyStyle.push("informal address like mate");
+  if (/\breckon\b/i.test(cleaned)) vocabularyStyle.push("uses reckon");
+  if (/\baye\b/i.test(cleaned)) vocabularyStyle.push("uses aye");
+  if (!vocabularyStyle.length) vocabularyStyle.push("everyday plain words");
+
+  return {
+    tone: uniqueStrings(tone, 5),
+    rhythm,
+    sentenceLength:
+      avgWordsPerSentence <= 7 ? "short" : avgWordsPerSentence <= 12 ? "medium" : "long",
+    casualness,
+    vocabularyStyle: uniqueStrings(vocabularyStyle, 5),
+    greetingStyle,
+    pacing: avgWordsPerSentence <= 7 ? "quick, clipped" : "steady",
+    punctuationHabits: uniqueStrings(punctuationHabits, 4),
+    quarantine,
+    isStyleOnlySample: isStyleOnlyOwnerSample(cleaned),
+    sourceLength: cleaned.length,
+    sourceWordCount: words.length,
+    sourceQuestionCount: (cleaned.match(/\?/g) || []).length,
+    sourceLowerPreview: clipText(lower, 80),
+  };
+}
+
+function formatOwnerVoiceStyleProfileForPrompt(profile) {
+  if (!profile) return "None provided";
+
+  const bannedLines = [
+    ...(profile.quarantine?.bannedPhrases || [])
+      .slice(0, 14)
+      .map((phrase) => `- "${phrase}"`),
+    ...(profile.quarantine?.bannedTopics || []).map((topic) => `- topic: ${topic}`),
+  ].join("\n");
+
+  return `
+OWNER VOICE STYLE PROFILE (STYLE EVIDENCE ONLY — NOT CONTENT):
+- Tone: ${profile.tone.join(", ")}
+- Rhythm: ${profile.rhythm}
+- Sentence length: ${profile.sentenceLength}
+- Casualness/formality: ${profile.casualness}
+- Vocabulary style: ${profile.vocabularyStyle.join(", ")}
+- Greeting style: ${profile.greetingStyle}
+- Pacing: ${profile.pacing}
+- Punctuation habits: ${profile.punctuationHabits.join(", ") || "standard"}
+
+STYLE APPLICATION RULES:
+- Apply ONLY the style traits above to generated posts.
+- Do NOT reuse people, places, hobbies, personal events, family references, workout references, catch-up plans, or any topic from the original owner sample.
+- Do NOT copy distinctive phrases from the original sample. Invent fresh business-relevant wording in the same style.
+- Post facts must come only from business evidence, business profile, selected lens, and approved claims.
+
+QUARANTINED SAMPLE CONTENT (MUST NOT APPEAR IN OUTPUT):
+${bannedLines || "- none detected"}
+`.trim();
+}
+
+function detectOwnerSampleContentLeakage(posts = [], ownerWritingSample = "") {
+  const cleaned = String(ownerWritingSample || "").replace(/\s+/g, " ").trim();
+  if (!cleaned || !posts.length) return { failed: false, reasons: [] };
+
+  const combined = posts.join("\n").toLowerCase();
+  const reasons = [];
+  const hardBanned = [
+    "burpees",
+    "pumping the burpees",
+    "workouts going",
+    "family all good",
+    "catch up soon",
+    "you been good",
+    "try again later",
+    "aye bro",
+  ];
+
+  for (const phrase of hardBanned) {
+    if (combined.includes(phrase)) {
+      reasons.push(`Contains quarantined sample phrase: "${phrase}"`);
+    }
+  }
+
+  const quarantine = extractQuarantinedSamplePhrases(cleaned);
+  for (const phrase of quarantine.bannedPhrases) {
+    if (phrase.length >= 18 && combined.includes(phrase)) {
+      reasons.push(`Contains copied sample phrase: "${phrase}"`);
+    }
+  }
+
+  return { failed: reasons.length > 0, reasons: uniqueStrings(reasons, 20) };
 }
 
 function buildVoiceInstructions(profile) {
@@ -4676,6 +4880,8 @@ Rules:
 - No code fences
 - Keep it grounded
 - Do not exaggerate
+- If the input is an OWNER VOICE STYLE PROFILE or personal writing sample, extract tone, rhythm, sentence length, casualness, vocabulary style, greeting style, pacing, and punctuation habits ONLY
+- Never carry over people, places, hobbies, family references, workouts, catch-up plans, personal events, or distinctive sample phrases into tone, vocabulary, doRules, or voiceSummary
 - If the input sounds like a customer testimonial, do NOT preserve the testimonial perspective
 - Convert the underlying brand traits into neutral brand voice guidance
 - Never write the voice summary from the perspective of a customer praising the business
@@ -4831,6 +5037,8 @@ function buildGenerationContext({
     (initialProfile?.customerOutcome?.valueOutcomes || []).join(", ") || "Not provided";
   const founderBeliefs =
     (initialProfile?.founderVoice?.doRules || []).join(", ") || "Not provided";
+  const ownerVoiceStyleProfile = buildOwnerVoiceStyleProfile(manualVoiceInput);
+  const ownerVoiceStyleBlock = formatOwnerVoiceStyleProfileForPrompt(ownerVoiceStyleProfile);
 
   const base = `
 PROFILE CONTEXT:
@@ -4852,8 +5060,8 @@ ${clipText(pastedSourceText || "None provided", 3000)}
 MANUAL CONTEXT:
 ${clipText(manualBusinessContext || "None provided", 2000)}
 
-MANUAL VOICE INPUT:
-${clipText(manualVoiceInput || "None provided", 3000)}
+OWNER VOICE STYLE PROFILE (style evidence only — do not reuse sample topics or phrases):
+${ownerVoiceStyleBlock}
 `;
 
   if (mode === "express") {
@@ -6012,8 +6220,15 @@ function buildSafeFallbackPosts({
   const primaryOffer = offerList[0] || "what we help with";
   const tags = buildFallbackHashtags(businessName, category, offerList);
   const angle = getFallbackCategoryAngle(category);
-  const opener = extractOwnerOpener(ownerText);
-  const toneHint = normalizeStringArray(voiceProfile?.tone, 1)[0] || "plain";
+  const ownerStyleProfile = buildOwnerVoiceStyleProfile(ownerText);
+  const opener =
+    ownerText.length >= 40 && !isStyleOnlyOwnerSample(ownerText)
+      ? extractOwnerOpener(ownerText)
+      : "";
+  const toneHint =
+    normalizeStringArray(ownerStyleProfile?.tone, 1)[0] ||
+    normalizeStringArray(voiceProfile?.tone, 1)[0] ||
+    "plain";
 
   let posts = [];
 
@@ -6022,11 +6237,17 @@ function buildSafeFallbackPosts({
       ? clipText(summary, 200)
       : `We focus on ${primaryOffer} in a way people can actually follow.`;
 
-    posts = [
-      `${opener} That is still how we think about ${angle}.\n\n${tags}`,
-      `We try to keep this ${toneHint} and useful. ${summaryLine}\n\n${tags}`,
-      `If ${angle} is on your mind, we would rather talk it through plainly than promise something we cannot stand behind.\n\n${tags}`,
-    ];
+    posts = opener
+      ? [
+          `${opener} That is still how we think about ${angle}.\n\n${tags}`,
+          `We try to keep this ${toneHint} and useful. ${summaryLine}\n\n${tags}`,
+          `If ${angle} is on your mind, we would rather talk it through plainly than promise something we cannot stand behind.\n\n${tags}`,
+        ]
+      : [
+          `We keep this ${toneHint} and straight to the point when we talk about ${angle}.\n\n${tags}`,
+          `Plain talk matters to us. ${summaryLine}\n\n${tags}`,
+          `If ${angle} is on your mind, we would rather talk it through plainly than promise something we cannot stand behind.\n\n${tags}`,
+        ];
   } else {
     posts = [
       `At ${name}, we try to make ${angle} easier to understand without overcomplicating it.\n\n${tags}`,
@@ -9675,9 +9896,17 @@ async function buildBusinessProfile(input = {}) {
     laneGather = await gatherLaneSources(normalizedUrl);
   }
 
+  const ownerSampleForFacts = isStyleOnlyOwnerSample(ownerWritingSample)
+    ? ""
+    : ownerWritingSample;
+  const manualContextForFacts = isStyleOnlyOwnerSample(manualBusinessContext)
+    ? ""
+    : manualBusinessContext;
+  const pastedTextForFacts = isStyleOnlyOwnerSample(pastedSourceText) ? "" : pastedSourceText;
+
   const founderText = laneText(
     laneGather?.lanes?.founderVoice || [],
-    manualBusinessContext || pastedSourceText || ownerWritingSample || ""
+    manualContextForFacts || pastedTextForFacts || ownerSampleForFacts || ""
   );
 
   const customerText = laneText(
@@ -9692,10 +9921,17 @@ async function buildBusinessProfile(input = {}) {
 
   const founderSourceInput = clipText(
     mode === "manual"
-      ? manualBusinessContext || pastedSourceText || ownerWritingSample
+      ? manualContextForFacts || pastedTextForFacts || ownerSampleForFacts
       : mode === "hybrid"
-      ? pastedSourceText || manualBusinessContext || ownerWritingSample || founderText
-      : founderText || pastedSourceText || manualBusinessContext || ownerWritingSample || productText,
+      ? pastedTextForFacts ||
+          manualContextForFacts ||
+          ownerSampleForFacts ||
+          founderText
+      : founderText ||
+          pastedTextForFacts ||
+          manualContextForFacts ||
+          ownerSampleForFacts ||
+          productText,
     5000
   );
 
@@ -9732,11 +9968,18 @@ async function buildBusinessProfile(input = {}) {
     sourceProfileSummary: sourceProfile?.businessProfile?.summary || "",
   });
 
-  const safeFounderVoice = await runJsonChat(
-    voiceAgentPrompt(
-      clipText(safeVoiceSourceText || founderSourceInput || "", 5000)
-    )
-  );
+  const ownerStyleProfile = buildOwnerVoiceStyleProfile(ownerWritingSample);
+  const ownerStylePromptBlock = ownerStyleProfile
+    ? formatOwnerVoiceStyleProfileForPrompt(ownerStyleProfile)
+    : "";
+  const voiceAgentInput = [
+    clipText(safeVoiceSourceText || founderSourceInput || "", 5000),
+    ownerStylePromptBlock,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const safeFounderVoice = await runJsonChat(voiceAgentPrompt(voiceAgentInput));
 
   const finalBusinessName =
     sourceProfile?.businessProfile?.name ||
@@ -10767,12 +11010,13 @@ APPROVED CLAIMS:
 ${approvedPostClaimLines}
 
 NON-NEGOTIABLE CLAIM RULES:
-- Claim safety limits facts, not voice. When manualVoiceInput is provided, keep the owner's tone, rhythm, phrasing, and point of view dominant across all 3 posts.
-- When manualVoiceInput is provided, first-person owner voice is allowed even if approved claims are weak; do not switch to third person or neutral brand voice because evidence is thin.
-- When manualVoiceInput is provided and approved claims are weak or unavailable, stay specific only where source-backed; otherwise write less specific and more general — but still in the owner's human voice. Do not invent proof, guarantees, records, "always/every", "non-negotiable", or exact operational details.
-- When manualVoiceInput is not provided, do not write in first person as the founder, owner, team, or business unless website source text directly supports that voice; otherwise use third person or neutral brand voice.
-- When manualVoiceInput is not provided and approved claims are weak or unavailable, write useful category-level education instead of specific proof claims.
+- Claim safety limits facts, not voice. When an owner voice style profile is provided, keep the owner's tone, rhythm, and point of view dominant across all 3 posts — but base post content only on business evidence, profile, lens, and approved claims.
+- When an owner voice style profile is provided, first-person owner voice is allowed even if approved claims are weak; do not switch to third person or neutral brand voice because evidence is thin.
+- When an owner voice style profile is provided and approved claims are weak or unavailable, stay specific only where source-backed; otherwise write less specific and more general — but still in the owner's human voice. Do not invent proof, guarantees, records, "always/every", "non-negotiable", or exact operational details.
+- When no owner voice style profile is provided, do not write in first person as the founder, owner, team, or business unless website source text directly supports that voice; otherwise use third person or neutral brand voice.
+- When no owner voice style profile is provided and approved claims are weak or unavailable, write useful category-level education instead of specific proof claims.
 - Do not upgrade source facts into stronger promises, guarantees, superiority claims, sales results, customer outcomes, operational promises, or behind-the-scenes behaviour unless they appear in approved claims.
+- Never reuse factual topics or distinctive phrases from the owner writing sample. The sample is style evidence only.
 
 QUICK LENS:
 ${lensTitle}
@@ -10831,40 +11075,40 @@ RECENT POSTS TO AVOID COPYING:
 ${previousPosts || "No previous posts stored yet."}
 
 ${hasManualVoiceInput ? `
-RAW OWNER VOICE AUTHORITY:
-- MANUAL VOICE INPUT (in PROFILE CONTEXT above) is the primary style authority for tone, rhythm, phrasing, opener shape, and point of view across all 3 posts.
-- Mirror actual wording patterns from MANUAL VOICE INPUT where claim-safe: sentence length, directness, informal register, and characteristic phrases must survive generation.
-- Preserve lived phrasing such as "mate", "reckon", "had a look", and "straight talk" when they appear in MANUAL VOICE INPUT. Do not polish them into neutral brand language.
+OWNER VOICE STYLE AUTHORITY:
+- OWNER VOICE STYLE PROFILE (in PROFILE CONTEXT above) is the primary style authority for tone, rhythm, sentence length, casualness, greeting style, pacing, and punctuation habits across all 3 posts.
+- Apply style traits only. Do NOT reuse people, places, hobbies, family references, workouts, catch-up plans, personal events, or any quarantined sample phrase listed in the style profile.
+- Invent fresh business-relevant wording in the owner's style. Do not copy distinctive phrases from the original owner sample.
 - Claim safety governs facts only. Weak or thin approved claims mean fewer specific proof statements — not smoother, corporate, or third-person voice.
-- If any instruction below conflicts with MANUAL VOICE INPUT on tone or wording, follow MANUAL VOICE INPUT.
-- Mirror the owner's wording patterns, but do not paste the full MANUAL VOICE INPUT into any single post. Use 1–2 short owner phrases per post, then adapt them naturally to the website topic.
+- If any instruction below conflicts with OWNER VOICE STYLE PROFILE on tone, follow the style profile — but never import sample topics or copied phrases.
 
 VOICE PROFILE (SECONDARY — supporting traits only):
 ` : `
 VOICE PROFILE:
 `}${buildVoiceInstructions(voiceProfile)}${hasManualVoiceInput ? `
 VOICE PROFILE SUBORDINATION:
-- Use VOICE PROFILE only where MANUAL VOICE INPUT does not already set tone, rhythm, or phrasing.
-- Do not let VOICE PROFILE neutralize, flatten, or replace the owner's lived voice.
-- Do not convert conversational owner language into category-level lecturing or cautious brand narration.
+- Use VOICE PROFILE only where OWNER VOICE STYLE PROFILE does not already set tone, rhythm, or phrasing.
+- Do not let VOICE PROFILE neutralize, flatten, or replace the owner's lived style.
+- Do not convert conversational owner style into category-level lecturing or cautious brand narration.
 ` : ""}
 
 CORE RULE:
 All 3 posts must sound like the SAME business voice.
 Do NOT create 3 different personalities.
-The business must remain clear, consistent, and human-led; when manualVoiceInput exists, owner perspective is intentional and dominant — claim safety governs facts only.
+The business must remain clear, consistent, and human-led; when an owner voice style profile exists, owner perspective is intentional and dominant — claim safety governs facts only.
 
 OWNER-CENTRED RULE:
-- If manualVoiceInput exists, the owner remains the dominant speaker for tone, rhythm, phrasing, and point of view across all 3 posts.
-- If manualVoiceInput exists, claim safety may limit what facts can be stated, but must not flatten the owner into neutral brand narration or category-level lecturing.
-- If the only source is the public website and manualVoiceInput is absent, do not invent founder or owner first-person perspective.
-- The business may feel human-led through tone supported by manualVoiceInput or source material, while factual claims stay inside approved claims.
+- If an owner voice style profile exists, the owner remains the dominant speaker for tone, rhythm, and point of view across all 3 posts.
+- If an owner voice style profile exists, claim safety may limit what facts can be stated, but must not flatten the owner into neutral brand narration or category-level lecturing.
+- If the only source is the public website and no owner voice style profile is present, do not invent founder or owner first-person perspective.
+- The business may feel human-led through style supported by the owner voice profile or source material, while factual claims stay inside approved claims.
 
 IMPORTANT VOICE RULE:
-- Do NOT write from inside the owner voice unless manualVoiceInput or owner-provided writing exists, or approved source evidence supports that voice.
-- When manualVoiceInput exists, stay inside the owner voice even if approved claims are weak; reduce factual specificity instead of switching to neutral or third-person voice.
-- When owner voice is not source-backed and manualVoiceInput is absent, use neutral brand voice or third-person business voice.
-- Keep factual claims grounded in approved claims; weak evidence means fewer specific claims, not less human tone when manualVoiceInput exists.
+- Do NOT write from inside the owner voice unless an owner voice style profile exists, or approved source evidence supports that voice.
+- When an owner voice style profile exists, stay inside the owner voice even if approved claims are weak; reduce factual specificity instead of switching to neutral or third-person voice.
+- When owner voice is not source-backed and no owner voice style profile exists, use neutral brand voice or third-person business voice.
+- Keep factual claims grounded in approved claims; weak evidence means fewer specific claims, not less human tone when an owner voice style profile exists.
+- Never import sample topics, hobbies, family references, workouts, catch-up plans, or copied phrases from the owner writing sample.
 
 LENS SEPARATION RULE:
 - Make this lens clearly distinct from the other quick buttons
@@ -11016,6 +11260,20 @@ let posts = await generatePostsWithHistoryGuard(
 
     const filteredGeneric = posts.filter((p) => !soundsTooGeneric(p));
     if (filteredGeneric.length === 3) posts = filteredGeneric;
+
+    const sampleLeakageCheck = detectOwnerSampleContentLeakage(posts, manualVoiceInput);
+    if (sampleLeakageCheck.failed) {
+      console.warn("OWNER SAMPLE LEAKAGE GUARD:", sampleLeakageCheck.reasons);
+      posts = buildSafeFallbackPosts({
+        category,
+        businessName: finalBusinessName,
+        manualVoiceInput,
+        voiceProfile,
+        businessSummary:
+          initialProfile?.businessProfile?.summary || businessSummary || "",
+        offers: initialProfile?.brandProductTruth?.offers || [],
+      });
+    }
 
     posts = enforceFinalQuietRules(posts, category);
 
@@ -11902,4 +12160,9 @@ module.exports = {
   detectGovernanceLanguage,
   validatePostsAgainstGovernanceLanguage,
   buildSafeFallbackPosts,
+  buildOwnerVoiceStyleProfile,
+  formatOwnerVoiceStyleProfileForPrompt,
+  detectOwnerSampleContentLeakage,
+  isStyleOnlyOwnerSample,
+  buildGenerationContext,
 };
