@@ -6173,36 +6173,271 @@ function extractOwnerOpener(manualVoiceInput = "") {
   return clipText(firstSentenceMatch ? firstSentenceMatch[0].trim() : cleaned, 180);
 }
 
-function getFallbackCategoryAngle(category = "") {
-  const angles = {
-    "Daily Relief": "the small frictions that make a day harder than it needs to be",
-    "Everyday Ritual": "the routines people lean on when life stays busy",
-    "Founder Reflection": "why we keep showing up for this work",
-    "Product in Real Life": "where a useful product or service actually shows up in real life",
-    "Quiet Value": "the subtle difference people notice once something works properly",
-    "Standards and Care": "why doing the job properly still matters",
-    "Busy Day Ease": "how a packed day feels when one thing is handled properly",
-    "Small Moment Real Value": "the ordinary moments where good service actually shows",
-    "Something Real": "the everyday problem this kind of business exists to solve",
-  };
+function extractConfirmedLocationFromSummary(summary = "") {
+  const cleaned = String(summary || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
 
-  return angles[category] || angles["Something Real"];
+  const locatedMatch = cleaned.match(/\b(?:located|based) in ([^,.!?]{3,40})/i);
+  if (locatedMatch) return locatedMatch[1].trim();
+
+  return "";
+}
+
+function inferFallbackDomain(evidenceText = "") {
+  const lower = String(evidenceText || "").toLowerCase();
+
+  if (/\b(childcare|early childhood|kindergarten|daycare|day care|preschool|ece)\b/.test(lower)) {
+    return "childcare";
+  }
+  if (/\b(plumb|drain|pipe|hot water|bathroom repair|callout|blocked drain)\b/.test(lower)) {
+    return "plumbing";
+  }
+  if (/\b(barber|barbershop|haircut|fade|beard|grooming)\b/.test(lower)) {
+    return "barber";
+  }
+  if (/\b(veterinar|vet clinic|animal hospital|pet care|veterinary)\b/.test(lower)) {
+    return "vet";
+  }
+  if (/\b(supplement|protein|recovery|nutrition|vitamin)\b/.test(lower)) {
+    return "supplements";
+  }
+
+  return "general";
+}
+
+function extractFallbackEvidence({
+  businessName = "",
+  businessSummary = "",
+  offers = [],
+  location = "",
+} = {}) {
+  const name = String(businessName || "our business").trim();
+  const summary = String(businessSummary || "").replace(/\s+/g, " ").trim();
+  const offerList = normalizeStringArray(offers, 3);
+  const locationText = String(location || extractConfirmedLocationFromSummary(summary) || "").trim();
+  const evidenceText = `${summary} ${offerList.join(" ")}`.trim();
+
+  return {
+    name,
+    summary,
+    summaryLine: summary ? clipText(summary, 220) : "",
+    offers: offerList,
+    primaryOffer: offerList[0] || "",
+    secondaryOffer: offerList[1] || "",
+    tertiaryOffer: offerList[2] || "",
+    location: locationText,
+    domain: inferFallbackDomain(evidenceText),
+    hasStrongFacts: Boolean(summary || offerList.length > 0),
+  };
+}
+
+function attachFallbackTags(postBodies = [], tags = "") {
+  return uniqueStrings(
+    postBodies.map((body) => String(body || "").trim()).filter(Boolean),
+    3
+  )
+    .slice(0, 3)
+    .map((body) => `${body}\n\n${tags}`);
+}
+
+function padEvidenceFallbackPosts(evidence = {}, bodies = []) {
+  const posts = uniqueStrings(bodies.map((body) => String(body || "").trim()).filter(Boolean), 3);
+  const { name, summaryLine, primaryOffer, secondaryOffer, location } = evidence;
+  const locationSuffix = location ? ` in ${location}` : "";
+
+  while (posts.length < 3) {
+    if (posts.length === 0 && summaryLine) {
+      posts.push(summaryLine);
+      continue;
+    }
+    if (posts.length === 1 && secondaryOffer) {
+      posts.push(`${name} also covers ${secondaryOffer}${locationSuffix}.`);
+      continue;
+    }
+    if (posts.length === 1 && primaryOffer) {
+      posts.push(`${name} lists ${primaryOffer} as a confirmed service${locationSuffix}.`);
+      continue;
+    }
+    if (primaryOffer) {
+      posts.push(`${name} handles ${primaryOffer}${locationSuffix}.`);
+      continue;
+    }
+    posts.push(`${name}${locationSuffix ? ` serves customers${locationSuffix}` : " shares confirmed business information on its website"}.`);
+  }
+
+  return posts.slice(0, 3);
+}
+
+function composeDomainFallbackPosts(evidence = {}, opener = "") {
+  const {
+    name,
+    summaryLine,
+    primaryOffer,
+    secondaryOffer,
+    tertiaryOffer,
+    location,
+    domain,
+    hasStrongFacts,
+  } = evidence;
+  const loc = location ? ` in ${location}` : "";
+
+  if (!hasStrongFacts) {
+    return padEvidenceFallbackPosts(evidence, [
+      `${name}${loc ? ` operates${loc}` : " is listed on its website"}.`,
+      `${name} shares confirmed service information online.`,
+    ]);
+  }
+
+  if (opener) {
+    if (domain === "plumbing") {
+      return padEvidenceFallbackPosts(evidence, [
+        `${opener} That is the approach behind ${name}'s ${primaryOffer || "plumbing"} work.`,
+        summaryLine || `${name} handles ${primaryOffer || "local plumbing jobs"}${loc}.`,
+        secondaryOffer
+          ? `Homeowners looking at ${primaryOffer} or ${secondaryOffer} can contact ${name} for a clear quote on the job.`
+          : `${name} covers ${primaryOffer || "common plumbing jobs"} for local homes${loc}.`,
+      ]);
+    }
+
+    return padEvidenceFallbackPosts(evidence, [
+      `${opener} That is still how we run ${name}${primaryOffer ? ` around ${primaryOffer}` : ""}.`,
+      summaryLine || `${name} works on ${primaryOffer || "confirmed services"}${loc}.`,
+      secondaryOffer
+        ? `${name} covers ${primaryOffer} and ${secondaryOffer}${loc}.`
+        : `${name} lists ${primaryOffer || "confirmed services"}${loc}.`,
+    ]);
+  }
+
+  if (domain === "childcare") {
+    return padEvidenceFallbackPosts(evidence, [
+      summaryLine || `${name} supports families through ${primaryOffer || "early learning"}${loc}.`,
+      primaryOffer && secondaryOffer
+        ? `Families at ${name} can access ${primaryOffer} and ${secondaryOffer}${loc}.`
+        : primaryOffer
+        ? `${name} provides ${primaryOffer}${loc} for local families.`
+        : `${name} supports local families${loc}.`,
+      /\bcentres?\b/i.test(summaryLine)
+        ? `${name} runs early learning across its centres.`
+        : tertiaryOffer
+        ? `${name} also offers ${tertiaryOffer}${loc}.`
+        : `${name} works with children and families${loc}.`,
+    ]);
+  }
+
+  if (domain === "plumbing") {
+    return padEvidenceFallbackPosts(evidence, [
+      summaryLine || `${name} handles ${primaryOffer || "plumbing work"}${loc}.`,
+      primaryOffer
+        ? `${name} takes on ${primaryOffer}${secondaryOffer ? ` and ${secondaryOffer}` : ""}${loc}.`
+        : `${name} covers local plumbing jobs${loc}.`,
+      secondaryOffer
+        ? `Homeowners needing ${secondaryOffer} can reach ${name}${loc}.`
+        : `${name} lists ${primaryOffer || "plumbing services"}${loc}.`,
+    ]);
+  }
+
+  if (domain === "barber") {
+    return padEvidenceFallbackPosts(evidence, [
+      summaryLine || `${name} provides ${primaryOffer || "barbering"}${loc}.`,
+      primaryOffer && secondaryOffer
+        ? `Clients book ${primaryOffer} and ${secondaryOffer} at ${name}${loc}.`
+        : primaryOffer
+        ? `${name} specialises in ${primaryOffer}${loc}.`
+        : `${name} handles haircuts and grooming${loc}.`,
+      /\b(fade|beard|groom)\b/i.test(`${summaryLine} ${primaryOffer} ${secondaryOffer}`)
+        ? `${name} covers fades, beard work, and sharp grooming${loc}.`
+        : tertiaryOffer
+        ? `${name} also offers ${tertiaryOffer}${loc}.`
+        : `${name} is set up for regular grooming appointments${loc}.`,
+    ]);
+  }
+
+  if (domain === "vet") {
+    return padEvidenceFallbackPosts(evidence, [
+      summaryLine || `${name} provides ${primaryOffer || "veterinary care"}${loc}.`,
+      primaryOffer
+        ? `Pet owners visit ${name} for ${primaryOffer}${secondaryOffer ? ` and ${secondaryOffer}` : ""}${loc}.`
+        : `${name} supports local pet owners${loc}.`,
+      tertiaryOffer
+        ? `${name} also offers ${tertiaryOffer}${loc}.`
+        : `${name} lists veterinary services for local pets${loc}.`,
+    ]);
+  }
+
+  if (domain === "supplements") {
+    return padEvidenceFallbackPosts(evidence, [
+      summaryLine || `${name} stocks ${primaryOffer || "supplements"}${loc}.`,
+      primaryOffer && secondaryOffer
+        ? `Customers shop ${primaryOffer} and ${secondaryOffer} through ${name}${loc}.`
+        : primaryOffer
+        ? `${name} sells ${primaryOffer}${loc}.`
+        : `${name} focuses on supplement retail${loc}.`,
+      tertiaryOffer
+        ? `${name} also lists ${tertiaryOffer}${loc}.`
+        : `${name} covers recovery and training nutrition${loc}.`,
+    ]);
+  }
+
+  return padEvidenceFallbackPosts(evidence, [
+    summaryLine || `${name} offers ${primaryOffer || "confirmed services"}${loc}.`,
+    primaryOffer && secondaryOffer
+      ? `${name} covers ${primaryOffer} and ${secondaryOffer}${loc}.`
+      : primaryOffer
+      ? `${name} lists ${primaryOffer}${loc}.`
+      : `${name} shares confirmed business information${loc}.`,
+    tertiaryOffer
+      ? `${name} also handles ${tertiaryOffer}${loc}.`
+      : secondaryOffer
+      ? `${name} also covers ${secondaryOffer}${loc}.`
+      : `${name}${loc ? ` serves customers${loc}` : " stays grounded in confirmed website information"}.`,
+  ]);
+}
+
+function buildBusinessSpecificFallbackPosts({
+  businessName = "Your Brand",
+  businessSummary = "",
+  offers = [],
+  category = "Something Real",
+  location = "",
+  manualVoiceInput = "",
+  tags = "",
+} = {}) {
+  const evidence = extractFallbackEvidence({
+    businessName,
+    businessSummary,
+    offers,
+    location,
+  });
+  const ownerText = String(manualVoiceInput || "").replace(/\s+/g, " ").trim();
+  const opener =
+    ownerText.length >= 40 && !isStyleOnlyOwnerSample(ownerText)
+      ? extractOwnerOpener(ownerText)
+      : "";
+  const bodies = composeDomainFallbackPosts(evidence, opener);
+
+  return attachFallbackTags(bodies, tags);
 }
 
 function buildUltraSafeOwnerFallbackPosts({
   businessName = "our business",
   category = "Something Real",
   offers = [],
+  businessSummary = "",
 } = {}) {
-  const name = String(businessName || "our business").trim();
   const tags = buildFallbackHashtags(businessName, category, offers);
-  const angle = getFallbackCategoryAngle(category);
+  const evidence = extractFallbackEvidence({
+    businessName,
+    businessSummary,
+    offers,
+  });
+  const bodies = composeDomainFallbackPosts(evidence, "");
 
-  return [
-    `We keep our focus simple at ${name}: help people understand ${angle} without making the message bigger than it needs to be.\n\n${tags}`,
-    `If you are trying to work out the next sensible step, we would rather explain it plainly than dress it up.\n\n${tags}`,
-    `That is the standard we hold ourselves to. Clear help, plain language, and no promises we cannot stand behind.\n\n${tags}`,
-  ];
+  return attachFallbackTags(
+    bodies.length >= 3
+      ? bodies
+      : padEvidenceFallbackPosts(evidence, bodies.length ? bodies : [`${evidence.name} shares confirmed website information.`]),
+    tags
+  );
 }
 
 function buildSafeFallbackPosts({
@@ -6212,64 +6447,48 @@ function buildSafeFallbackPosts({
   voiceProfile = null,
   businessSummary = "",
   offers = [],
+  location = "",
 } = {}) {
-  const name = String(businessName || "our business").trim();
-  const ownerText = String(manualVoiceInput || "").replace(/\s+/g, " ").trim();
-  const summary = String(businessSummary || "").replace(/\s+/g, " ").trim();
   const offerList = normalizeStringArray(offers, 3);
-  const primaryOffer = offerList[0] || "what we help with";
   const tags = buildFallbackHashtags(businessName, category, offerList);
-  const angle = getFallbackCategoryAngle(category);
-  const ownerStyleProfile = buildOwnerVoiceStyleProfile(ownerText);
-  const opener =
-    ownerText.length >= 40 && !isStyleOnlyOwnerSample(ownerText)
-      ? extractOwnerOpener(ownerText)
-      : "";
-  const toneHint =
-    normalizeStringArray(ownerStyleProfile?.tone, 1)[0] ||
-    normalizeStringArray(voiceProfile?.tone, 1)[0] ||
-    "plain";
 
-  let posts = [];
-
-  if (ownerText.length >= 40) {
-    const summaryLine = summary
-      ? clipText(summary, 200)
-      : `We focus on ${primaryOffer} in a way people can actually follow.`;
-
-    posts = opener
-      ? [
-          `${opener} That is still how we think about ${angle}.\n\n${tags}`,
-          `We try to keep this ${toneHint} and useful. ${summaryLine}\n\n${tags}`,
-          `If ${angle} is on your mind, we would rather talk it through plainly than promise something we cannot stand behind.\n\n${tags}`,
-        ]
-      : [
-          `We keep this ${toneHint} and straight to the point when we talk about ${angle}.\n\n${tags}`,
-          `Plain talk matters to us. ${summaryLine}\n\n${tags}`,
-          `If ${angle} is on your mind, we would rather talk it through plainly than promise something we cannot stand behind.\n\n${tags}`,
-        ];
-  } else {
-    posts = [
-      `At ${name}, we try to make ${angle} easier to understand without overcomplicating it.\n\n${tags}`,
-      summary
-        ? `${clipText(summary, 220)}\n\n${tags}`
-        : `We focus on ${primaryOffer} and keep the explanation practical.\n\n${tags}`,
-      `If you are weighing up options around ${angle}, we are happy to keep the conversation grounded and clear.\n\n${tags}`,
-    ];
-  }
+  let posts = buildBusinessSpecificFallbackPosts({
+    businessName,
+    businessSummary,
+    offers: offerList,
+    category,
+    location,
+    manualVoiceInput,
+    tags,
+  });
 
   let governanceCheck = validatePostsAgainstGovernanceLanguage(posts);
   if (governanceCheck.failed) {
-    posts = buildUltraSafeOwnerFallbackPosts({ businessName, category, offers });
+    posts = buildUltraSafeOwnerFallbackPosts({
+      businessName,
+      category,
+      offers: offerList,
+      businessSummary,
+    });
     governanceCheck = validatePostsAgainstGovernanceLanguage(posts);
   }
 
   if (governanceCheck.failed) {
-    posts = [
-      "We try to explain things plainly and stay useful for the people we serve.\n\n#YourBrand #LocalBusiness #SmallBusiness",
-      "If you are weighing up options, we would rather give you a clear picture than a big promise.\n\n#YourBrand #LocalHelp #SmallBusiness",
-      "That is the standard we hold ourselves to: plain language, practical help, and no unnecessary noise.\n\n#YourBrand #PlainTalk #SmallBusiness",
-    ];
+    const evidence = extractFallbackEvidence({
+      businessName,
+      businessSummary,
+      offers: offerList,
+      location,
+    });
+    posts = attachFallbackTags(
+      padEvidenceFallbackPosts(evidence, [
+        evidence.summaryLine || `${evidence.name} shares confirmed website information.`,
+        evidence.primaryOffer
+          ? `${evidence.name} lists ${evidence.primaryOffer}.`
+          : `${evidence.name} is listed online.`,
+      ]),
+      "#YourBrand #LocalBusiness #SmallBusiness"
+    );
   }
 
   return posts.slice(0, 3);
