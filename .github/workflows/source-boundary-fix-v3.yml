@@ -1,0 +1,59 @@
+name: Apply YEVIB source boundary fix v3
+
+on:
+  push:
+    paths:
+      - '.github/workflows/source-boundary-fix-v3.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Make repair replacements literal
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/apply_source_boundary_fix.py')
+          text = p.read_text()
+          old = 'new_text, count = re.subn(pattern, repl, text, count=1, flags=flags)'
+          new = 'new_text, count = re.subn(pattern, lambda _m: repl, text, count=1, flags=flags)'
+          if text.count(old) != 1:
+              raise SystemExit('Could not patch sub_once helper')
+          p.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Apply source-role repair
+        run: python scripts/apply_source_boundary_fix.py
+
+      - name: Verify source boundary
+        run: |
+          node source-boundary-self-test.js
+          npm run test:fallback
+          npm run test:voice
+          node --check server.js
+          node --check free-v1.js
+
+      - name: Commit verified repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js free-v1.js free-v1.html fallback-posts-self-test.js voice-dominance-self-test.js source-boundary-self-test.js
+          git diff --cached --quiet && exit 0
+          git commit -m "Enforce absolute source-role boundary for posts"
+          git push origin HEAD:main
