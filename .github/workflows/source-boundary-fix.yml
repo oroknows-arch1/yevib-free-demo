@@ -1,0 +1,655 @@
+name: Apply YEVIB source boundary fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/source-boundary-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply absolute source-role boundary
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 exact match, found {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          def sub_once(path, pattern, repl, label):
+              p = Path(path)
+              text = p.read_text()
+              new_text, count = re.subn(pattern, repl, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 regex match, found {count}")
+              p.write_text(new_text)
+
+          server = Path('server.js')
+
+          # 1) Owner writing sample is the ONLY source allowed to define writing style.
+          sub_once(
+              server,
+              r'function chooseVoiceSourceText\(\{.*?\n\}\n\nfunction isWeakVoiceSource',
+              '''function chooseVoiceSourceText({ ownerWritingSample }) {
+            return clipText(ownerWritingSample || "", 3000);
+          }
+
+          function isWeakVoiceSource''',
+              'replace chooseVoiceSourceText',
+          )
+
+          replace_once(
+              server,
+              '''  const safeVoiceSourceText = chooseVoiceSourceText({
+            mode,
+            founderText,
+            customerText,
+            productText,
+            pastedSourceText,
+            manualBusinessContext,
+            sourceProfileSummary: sourceProfile?.businessProfile?.summary || "",
+          });''',
+              '''  const safeVoiceSourceText = chooseVoiceSourceText({
+            ownerWritingSample,
+          });''',
+              'wire owner writing sample into voice source',
+          )
+
+          replace_once(
+              server,
+              '''  const voiceAgentInput = [
+            clipText(safeVoiceSourceText || founderSourceInput || "", 5000),
+            ownerStylePromptBlock,
+          ]
+            .filter(Boolean)
+            .join("\\n\\n");
+
+          const safeFounderVoice = await runJsonChat(voiceAgentPrompt(voiceAgentInput));''',
+              '''  const voiceAgentInput = [
+            clipText(safeVoiceSourceText || "", 5000),
+            ownerStylePromptBlock,
+          ]
+            .filter(Boolean)
+            .join("\\n\\n");
+
+          const voiceAgentSource =
+            voiceAgentInput ||
+            "No owner writing sample supplied. Return a neutral, clear, practical small-business voice profile. Do not infer writing style from website content.";
+
+          const safeFounderVoice = await runJsonChat(voiceAgentPrompt(voiceAgentSource));''',
+              'remove website voice fallback from voice agent',
+          )
+
+          replace_once(
+              server,
+              '''      voiceSourceLane:
+                mode === "manual"
+                  ? "manual"
+                  : safeVoiceSourceText === founderText
+                  ? "founder"
+                  : safeVoiceSourceText === pastedSourceText
+                  ? "pasted"
+                  : safeVoiceSourceText === manualBusinessContext
+                  ? "manual"
+                  : "fallback",
+              weakVoiceSource: isWeakVoiceSource(safeVoiceSourceText),''',
+              '''      voiceSourceLane: safeVoiceSourceText ? "owner_sample" : "neutral_fallback",
+              weakVoiceSource: !safeVoiceSourceText || isWeakVoiceSource(safeVoiceSourceText),''',
+              'replace voice source lane classification',
+          )
+
+          replace_once(
+              server,
+              '''      manualContextUsed: Boolean(manualBusinessContext),''',
+              '''      manualContextUsed: Boolean(manualBusinessContext),
+              ownerWritingSampleUsed: Boolean(ownerWritingSample),''',
+              'record explicit owner writing sample use',
+          )
+
+          sub_once(
+              server,
+              r'const hasSuppliedOwnerWriting = Boolean\(\s*sourceProfile\?\.pastedTextUsed \|\|\s*sourceProfile\?\.manualContextUsed\s*\);',
+              '''const hasSuppliedOwnerWriting = Boolean(
+            sourceProfile?.ownerWritingSampleUsed ||
+            sourceProfile?.pastedTextUsed ||
+            sourceProfile?.manualContextUsed
+          );''',
+              'count owner writing sample as owner writing evidence',
+          )
+
+          # 2) Website text supplies facts only. Raw About-page sentences never become fallback copy.
+          replace_once(
+              server,
+              '''    summaryLine: summary ? clipText(summary, 220) : "",''',
+              '''    summaryLine: "",''',
+              'remove raw website summary from fallback output',
+          )
+
+          sub_once(
+              server,
+              r'  const ownerText = String\(manualVoiceInput \|\| ""\)\.replace\(/\\s\+/g, " "\)\.trim\(\);\n  const opener =\n    ownerText\.length >= 40 && !isStyleOnlyOwnerSample\(ownerText\)\n      \? extractOwnerOpener\(ownerText\)\n      : "";\n  const bodies = composeDomainFallbackPosts\(evidence, opener\);',
+              '''  // Owner samples are style evidence only. Never copy their factual topics or phrases into fallback content.
+            const opener = "";
+            const bodies = composeDomainFallbackPosts(evidence, opener);''',
+              'remove owner sample content from fallback copy',
+          )
+
+          # 3) Detect About-page/brochure leakage before anything is returned to the user.
+          detector = r'''
+          function getBoundaryNgrams(text = "", size = 8) {
+            const words = String(text || "")
+              .toLowerCase()
+              .replace(/[^a-z0-9\\s]/g, " ")
+              .replace(/\\s+/g, " ")
+              .trim()
+              .split(" ")
+              .filter(Boolean);
+
+            const grams = [];
+            for (let i = 0; i <= words.length - size; i += 1) {
+              grams.push(words.slice(i, i + size).join(" "));
+            }
+            return grams;
+          }
+
+          function detectWebsiteBrochureLeakage(posts = [], profile = {}) {
+            const reasons = [];
+            const businessName = String(profile?.businessProfile?.name || "").trim().toLowerCase();
+            const websiteText = [
+              profile?.sourceProfile?.founderLanePreview || "",
+              profile?.sourceProfile?.productLanePreview || "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+            const websiteNgrams = new Set(getBoundaryNgrams(websiteText, 8));
+
+            const brochurePatterns = [
+              /\\bfamily[- ]owned and operated\\b/i,
+              /\\bbased in\\b/i,
+              /\\blocated in\\b/i,
+              /\\bproviding comprehensive\\b/i,
+              /\\bowner,? operator\\b/i,
+              /\\bhas over \\d+ years\\b/i,
+              /\\blists (?:a|an|the)\\b/i,
+              /\\bhigh-quality workmanship\\b/i,
+              /\\btrustworthy and reassuring customer experience\\b/i,
+            ];
+
+            (Array.isArray(posts) ? posts : []).forEach((post, index) => {
+              const body = String(post || "")
+                .replace(/\\n?#\\w+(?:\\s+#\\w+)*/g, " ")
+                .replace(/\\s+/g, " ")
+                .trim();
+              const lower = body.toLowerCase();
+              const patternHits = brochurePatterns.filter((pattern) => pattern.test(body)).length;
+
+              if (patternHits >= 2) {
+                reasons.push(`Post ${index + 1}: brochure/About-page sentence pattern detected.`);
+              }
+
+              if (
+                businessName &&
+                lower.startsWith(businessName) &&
+                /\\b(is|lists|provides|offers|has)\\b/.test(lower.slice(0, 140))
+              ) {
+                reasons.push(`Post ${index + 1}: business-summary opener detected.`);
+              }
+
+              if (websiteNgrams.size > 0) {
+                const overlap = getBoundaryNgrams(body, 8).find((gram) => websiteNgrams.has(gram));
+                if (overlap) {
+                  reasons.push(`Post ${index + 1}: copied website wording detected.`);
+                }
+              }
+            });
+
+            return {
+              failed: reasons.length > 0,
+              reasons: uniqueStrings(reasons, 12),
+            };
+          }
+
+          '''
+          replace_once(
+              server,
+              'async function generatePostsWithRetry(promptBase, category, voiceContext = {}) {',
+              detector + 'async function generatePostsWithRetry(promptBase, category, voiceContext = {}) {',
+              'insert website brochure leakage detector',
+          )
+
+          # 4) With owner voice present, never fall back to brochure copy. Block instead.
+          replace_once(
+              server,
+              '''return buildSafeFallbackPosts({
+            category,
+            businessName: voiceContext.businessName,
+            manualVoiceInput: voiceContext.manualVoiceInput,
+            voiceProfile: voiceContext.voiceProfile,
+            businessSummary: voiceContext.businessSummary,
+            offers: voiceContext.offers,
+          });''',
+              '''const hasOwnerVoiceStyle = Boolean(
+            String(voiceContext.manualVoiceInput || "").replace(/\\s+/g, " ").trim()
+          );
+
+          if (hasOwnerVoiceStyle) {
+            const boundaryError = new Error("OWNER_VOICE_BOUNDARY_BLOCKED");
+            boundaryError.code = "OWNER_VOICE_BOUNDARY_BLOCKED";
+            throw boundaryError;
+          }
+
+          return buildSafeFallbackPosts({
+            category,
+            businessName: voiceContext.businessName,
+            manualVoiceInput: "",
+            voiceProfile: null,
+            businessSummary: voiceContext.businessSummary,
+            offers: voiceContext.offers,
+          });''',
+              'block brochure fallback when owner voice is supplied',
+          )
+
+          # 5) Make the source-role firewall explicit inside the generation prompt.
+          replace_once(
+              server,
+              '''NON-NEGOTIABLE CLAIM RULES:
+          - Claim safety limits facts, not voice.''',
+              '''SOURCE ROLE FIREWALL — ABSOLUTE:
+          - WEBSITE / APPROVED CLAIMS = factual authority only. Website wording, tone, sentence rhythm, point of view, About-page copy, Our Story copy, and marketing phrasing must NEVER be used as writing-style authority.
+          - OWNER VOICE STYLE PROFILE = style authority only: sentence length, rhythm, vocabulary level, directness, casualness, first/third-person tendency, pacing, and punctuation. Never import factual topics, stories, people, events, or claims from the owner sample.
+          - OWNER CONTEXT / FOUNDER GOAL = purpose and angle only. It can decide what the post should focus on, but its wording is not reusable copy and its factual statements are not approved claims unless independently supported by website evidence.
+          - Generate NEW wording from the intersection of website facts × owner style × current purpose.
+          - NEVER turn an About, Founder, Our Story, service-summary, or homepage paragraph into a social post by copying, summarising, lightly rewriting, or adding hashtags.
+          - A post that reads like “Business X is…”, “Business X lists…”, “based in… providing…”, an About-page biography, or a service-directory description FAILS this boundary.
+          - If safe website facts are thin, reduce factual specificity. Never compensate by copying website prose.
+
+          NON-NEGOTIABLE CLAIM RULES:
+          - Claim safety limits facts, not voice.''',
+              'insert absolute source role firewall',
+          )
+
+          # 6) Recheck outputs for brochure leakage and retry once under a dedicated correction.
+          replace_once(
+              server,
+              '''let posts = await generatePostsWithHistoryGuard(
+            prompt,
+            category,
+            recentChosenPosts,
+            {
+              businessName: finalBusinessName,
+              manualVoiceInput,
+              voiceProfile,
+              businessSummary:
+                initialProfile?.businessProfile?.summary || businessSummary || "",
+              offers: initialProfile?.brandProductTruth?.offers || [],
+            }
+          );''',
+              '''const generationVoiceContext = {
+            businessName: finalBusinessName,
+            manualVoiceInput,
+            voiceProfile,
+            businessSummary:
+              initialProfile?.businessProfile?.summary || businessSummary || "",
+            offers: initialProfile?.brandProductTruth?.offers || [],
+          };
+
+          let posts = await generatePostsWithHistoryGuard(
+            prompt,
+            category,
+            recentChosenPosts,
+            generationVoiceContext
+          );
+
+          let brochureLeakageCheck = detectWebsiteBrochureLeakage(posts, initialProfile || {});
+          if (brochureLeakageCheck.failed) {
+            console.warn("SOURCE ROLE FIREWALL RETRY:", brochureLeakageCheck.reasons);
+            const firewallRetry = `
+          SOURCE ROLE FIREWALL RETRY:
+          The previous draft sounded like website/About-page copy.
+          - Start again with completely new social-post wording.
+          - Website and approved claims supply facts only.
+          - Owner voice profile supplies style only.
+          - Founder goal/current context supplies purpose only.
+          - Do not open with a business biography or service-directory summary.
+          - Do not copy or closely paraphrase any website sentence.
+          - Keep the post socially natural, owner-voiced when owner style exists, and factually inside approved claims.
+          `.trim();
+
+            posts = await generatePostsWithRetry(
+              `${prompt}\\n\\n${firewallRetry}`,
+              category,
+              generationVoiceContext
+            );
+            brochureLeakageCheck = detectWebsiteBrochureLeakage(posts, initialProfile || {});
+
+            if (brochureLeakageCheck.failed) {
+              const boundaryError = new Error("OWNER_VOICE_BOUNDARY_BLOCKED");
+              boundaryError.code = "OWNER_VOICE_BOUNDARY_BLOCKED";
+              boundaryError.reasons = brochureLeakageCheck.reasons;
+              throw boundaryError;
+            }
+          }''',
+              'add brochure leakage retry and block',
+          )
+
+          replace_once(
+              server,
+              '''    const sampleLeakageCheck = detectOwnerSampleContentLeakage(posts, manualVoiceInput);
+              if (sampleLeakageCheck.failed) {
+                console.warn("OWNER SAMPLE LEAKAGE GUARD:", sampleLeakageCheck.reasons);
+                posts = buildSafeFallbackPosts({
+                  category,
+                  businessName: finalBusinessName,
+                  manualVoiceInput,
+                  voiceProfile,
+                  businessSummary:
+                    initialProfile?.businessProfile?.summary || businessSummary || "",
+                  offers: initialProfile?.brandProductTruth?.offers || [],
+                });
+              }''',
+              '''    const sampleLeakageCheck = detectOwnerSampleContentLeakage(posts, manualVoiceInput);
+              if (sampleLeakageCheck.failed) {
+                console.warn("OWNER SAMPLE LEAKAGE GUARD:", sampleLeakageCheck.reasons);
+                const boundaryError = new Error("OWNER_VOICE_BOUNDARY_BLOCKED");
+                boundaryError.code = "OWNER_VOICE_BOUNDARY_BLOCKED";
+                boundaryError.reasons = sampleLeakageCheck.reasons;
+                throw boundaryError;
+              }''',
+              'never fall back after owner sample leakage',
+          )
+
+          replace_once(
+              server,
+              '''  } catch (err) {
+              console.error("GENERATE ERROR:", err);
+              res.status(500).json({ error: "Failed to generate posts." });
+            }
+          });''',
+              '''  } catch (err) {
+              console.error("GENERATE ERROR:", err);
+
+              if (
+                err?.code === "OWNER_VOICE_BOUNDARY_BLOCKED" ||
+                err?.message === "OWNER_VOICE_BOUNDARY_BLOCKED"
+              ) {
+                return res.status(422).json({
+                  error:
+                    "YEVIB blocked a draft because it was using website/About-page wording or owner-sample content in the wrong role. Try again, or add a little more owner voice.",
+                  code: "OWNER_VOICE_BOUNDARY_BLOCKED",
+                  reasons: Array.isArray(err?.reasons) ? err.reasons : [],
+                });
+              }
+
+              res.status(500).json({ error: "Failed to generate posts." });
+            }
+          });''',
+              'return explicit source boundary block',
+          )
+
+          replace_once(
+              server,
+              '''  buildGenerationContext,
+          };''',
+              '''  buildGenerationContext,
+            chooseVoiceSourceText,
+            detectWebsiteBrochureLeakage,
+          };''',
+              'export source boundary helpers for tests',
+          )
+
+          # 7) Free-demo intake wiring: each field has one role only.
+          js = Path('free-v1.js')
+          replace_once(
+              js,
+              '''function getOwnerTruth() {
+            return [
+              ($("#ownerTruth")?.value || "").trim(),
+              ($("#ownerMisunderstanding")?.value || "").trim(),
+            ].filter(Boolean).join("\\n\\n");
+          }''',
+              '''function getOwnerVoice() {
+            return ($("#ownerTruth")?.value || "").trim();
+          }
+
+          function getOwnerContext() {
+            return ($("#ownerMisunderstanding")?.value || "").trim();
+          }
+
+          function buildGenerationIdea(ownerContext = "") {
+            const lines = [
+              "Create a new social post using verified website facts in the supplied owner writing style. Do not summarise or paraphrase the About page.",
+            ];
+
+            if (ownerContext) {
+              lines.push(`Current angle/context only: ${ownerContext}`);
+            }
+
+            return lines.join("\\n");
+          }''',
+              'split owner voice from owner context in client',
+          )
+
+          replace_once(
+              js,
+              '''  const ownerTruth = getOwnerTruth();''',
+              '''  const ownerVoice = getOwnerVoice();
+            const ownerContext = getOwnerContext();''',
+              'separate owner voice and context at scan',
+          )
+
+          replace_once(
+              js,
+              '''    setScanStatus("Scan started. Reading website and owner truth...");''',
+              '''    setScanStatus("Scan started. Reading website facts, owner voice, and today's angle...");''',
+              'update scan status language',
+          )
+
+          replace_once(
+              js,
+              '''        pastedSourceText: ownerTruth,
+                manualBusinessContext: ownerTruth,
+                founderGoal: getFounderGoal(),
+                ownerWritingSample: ownerTruth,''',
+              '''        pastedSourceText: "",
+                manualBusinessContext: "",
+                founderGoal: getFounderGoal(),
+                ownerWritingSample: ownerVoice,''',
+              'keep owner voice out of fact/context fields during profile build',
+          )
+
+          replace_once(
+              js,
+              '''        idea: getRecommendedMove(freeV1Profile),''',
+              '''        idea: buildGenerationIdea(ownerContext),''',
+              'use owner context as purpose only',
+          )
+
+          replace_once(
+              js,
+              '''        pastedSourceText: ownerTruth,
+                manualBusinessContext: ownerTruth,
+                businessSummary: freeV1Profile?.businessProfile?.summary || "",
+                manualVoiceInput: ownerTruth,''',
+              '''        pastedSourceText: "",
+                manualBusinessContext: "",
+                businessSummary: freeV1Profile?.businessProfile?.summary || "",
+                manualVoiceInput: ownerVoice,''',
+              'keep owner sample style-only during post generation',
+          )
+
+          sub_once(
+              js,
+              r'''        weeklyPosts: \[\n          freeV1Profile\?\.executionPlan\?\.summary \|\| "",\n          \.\.\.\(freeV1Profile\?\.executionPlan\?\.actions \|\| \[\]\),\n        \]\.filter\(Boolean\)\.join\("\\n"\),''',
+              '''        weeklyPosts: "",''',
+              'remove strategy prose from post source material',
+          )
+
+          # 8) UI now states the actual enforced source roles.
+          html = Path('free-v1.html')
+          replace_once(
+              html,
+              'Paste a URL, add a little owner truth, and YEVIB creates a recommendation, post options, and a visual direction.',
+              "Paste a URL, add your writing style and today's angle, and YEVIB creates a recommendation, post options, and a visual direction.",
+              'update hero source-role language',
+          )
+          replace_once(
+              html,
+              '<p>Website source + owner context.</p>',
+              '<p>Website facts + owner style + today\'s angle.</p>',
+              'update scan card subtitle',
+          )
+          replace_once(
+              html,
+              'placeholder="Write in your own style here. YEVIB will use this to shape the tone, wording, and writing style of the post."',
+              'placeholder="Write a few lines naturally. YEVIB uses this for style only — rhythm, wording, directness and tone — never as business facts."',
+              'clarify owner voice role',
+          )
+          replace_once(
+              html,
+              '<label>Common misunderstanding <em>(optional)</em></label>\n          <textarea id="ownerMisunderstanding" placeholder="What do people often miss, assume, or misunderstand?"></textarea>',
+              '<label>Today\'s angle / common misunderstanding <em>(optional)</em></label>\n          <textarea id="ownerMisunderstanding" placeholder="What should today\'s post focus on? YEVIB uses this as direction, not reusable copy."></textarea>',
+              'clarify owner context role',
+          )
+          replace_once(
+              html,
+              '<div class="read-pill"><span>Best content lane</span><strong>Owner voice + website signal</strong></div>',
+              '<div class="read-pill"><span>Best content lane</span><strong>Website facts × owner style</strong></div>',
+              'update content lane label',
+          )
+          replace_once(
+              html,
+              '''    <li>Uses the website signal</li>
+              <li>Matches the selected founder goal</li>
+              <li>Uses the supplied owner voice</li>
+              <li>Keeps claims inside safe demo limits</li>''',
+              '''    <li>Uses website facts, not website writing style</li>
+              <li>Matches the selected founder goal</li>
+              <li>Uses the owner sample for style only</li>
+              <li>Blocks About-page paraphrasing and unsafe claims</li>''',
+              'replace hard-coded why-YEVIB claims',
+          )
+
+          # 9) Align existing tests with the stricter source-role law.
+          fallback = Path('fallback-posts-self-test.js')
+          ftext = fallback.read_text()
+          ftext = ftext.replace(
+              'runTest("plumbing fallback sounds like plumbing and keeps owner opener", () => {',
+              'runTest("plumbing fallback sounds like plumbing without importing owner-sample facts", () => {',
+          )
+          ftext = ftext.replace(
+              '  assert.ok(/(?:\\bI\\b|\\bwe\\b)/i.test(combined));\n',
+              '  assert.ok(!combined.toLowerCase().includes("people were tired of vague quotes"));\n',
+          )
+          fallback.write_text(ftext)
+
+          voice_test = Path('voice-dominance-self-test.js')
+          vtext = voice_test.read_text()
+          vtext = vtext.replace(
+              'runTest("new fallback returns exactly 3 owner-voiced posts", () => {',
+              'runTest("safe fallback returns 3 factual posts without importing owner-sample facts", () => {',
+          )
+          vtext = vtext.replace(
+              '  assert.ok(/(?:\\bI\\b|\\bwe\\b|\\bour\\b)/i.test(combined), "fallback must use owner-style first-person language");\n',
+              '  assert.ok(!combined.toLowerCase().includes("people were tired of vague quotes"), "fallback must not import owner-sample factual content");\n',
+          )
+          voice_test.write_text(vtext)
+
+          # 10) Permanent regression test for the exact failure class seen in the Top Gun case.
+          Path('source-boundary-self-test.js').write_text(r'''const assert = require("assert");
+          const {
+            chooseVoiceSourceText,
+            detectWebsiteBrochureLeakage,
+          } = require("./server.js");
+
+          const WEBSITE_ABOUT =
+            "Top Gun Air Conditioning Pty Ltd is a family-owned and operated HVAC company based in Camden South, NSW, providing comprehensive heating, ventilation, and air conditioning installation and maintenance services.";
+          const OWNER_SAMPLE =
+            "Look, I keep it simple. If something needs explaining, I say it straight and get on with the job.";
+
+          const selectedVoice = chooseVoiceSourceText({
+            founderText: WEBSITE_ABOUT,
+            productText: "Air conditioning installation and maintenance",
+            sourceProfileSummary: WEBSITE_ABOUT,
+            ownerWritingSample: OWNER_SAMPLE,
+          });
+          assert.strictEqual(selectedVoice, OWNER_SAMPLE, "owner writing must be the sole style source");
+
+          const noOwnerVoice = chooseVoiceSourceText({
+            founderText: WEBSITE_ABOUT,
+            productText: "Air conditioning installation and maintenance",
+            sourceProfileSummary: WEBSITE_ABOUT,
+            ownerWritingSample: "",
+          });
+          assert.strictEqual(noOwnerVoice, "", "website text must never become a voice source");
+
+          const profile = {
+            businessProfile: { name: "Top Gun Air Conditioning Pty Ltd" },
+            sourceProfile: {
+              founderLanePreview: WEBSITE_ABOUT,
+              productLanePreview: "Top Gun Air Conditioning provides air conditioning installation and maintenance services.",
+            },
+          };
+
+          const badPosts = [
+            "Top Gun Air Conditioning Pty Ltd is a family-owned and operated HVAC company based in Camden South, NSW, providing comprehensive heating, ventilation and air conditioning installation and maintenance services. #TopGun #HVAC #LocalBusiness",
+            "Top Gun Air Conditioning Pty Ltd lists a trustworthy and reassuring customer experience and high-quality workmanship in Camden South. #TopGun #HVAC #QualityMatters",
+            "Brendan Cashel is the owner, operator of Top Gun Air Conditioning and has over 15 years of experience in the trade. #TopGun #HVAC #FounderLed",
+          ];
+
+          const badCheck = detectWebsiteBrochureLeakage(badPosts, profile);
+          assert.strictEqual(badCheck.failed, true, "About-page brochure drafts must be blocked");
+          assert.ok(badCheck.reasons.length > 0);
+
+          const safePosts = [
+            "Hot weather is when air conditioning problems stop being background noise. If yours is struggling, getting the issue checked before the next run of heat is the sensible move. #TopGun #AirConditioning #HomeComfort",
+            "A lot of air conditioning problems start as small changes people put up with for too long. Less airflow, odd noise, rooms taking longer to cool — those are worth looking at before they become a bigger headache. #TopGun #HVAC #Maintenance",
+            "Air conditioning should make the house easier to live in, not become another thing you have to think about. Installation and maintenance are the practical part; comfort is the reason people care. #TopGun #AirConditioning #HomeComfort",
+          ];
+
+          const safeCheck = detectWebsiteBrochureLeakage(safePosts, profile);
+          assert.strictEqual(safeCheck.failed, false, safeCheck.reasons.join("; "));
+
+          console.log("Source boundary self-test passed.");
+          ''')
+          PY
+
+      - name: Run source-boundary regression tests
+        run: |
+          node source-boundary-self-test.js
+          npm run test:fallback
+          npm run test:voice
+          node --check server.js
+          node --check free-v1.js
+
+      - name: Commit verified repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js free-v1.js free-v1.html fallback-posts-self-test.js voice-dominance-self-test.js source-boundary-self-test.js
+          git diff --cached --quiet && exit 0
+          git commit -m "Enforce absolute source-role boundary for posts"
+          git push origin HEAD:main
