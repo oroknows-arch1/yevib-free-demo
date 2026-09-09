@@ -51,11 +51,24 @@ function getFounderGoal() {
 }
 
 
-function getOwnerTruth() {
-  return [
-    ($("#ownerTruth")?.value || "").trim(),
-    ($("#ownerMisunderstanding")?.value || "").trim(),
-  ].filter(Boolean).join("\n\n");
+function getOwnerVoice() {
+  return ($("#ownerTruth")?.value || "").trim();
+}
+
+function getOwnerContext() {
+  return ($("#ownerMisunderstanding")?.value || "").trim();
+}
+
+function buildGenerationIdea(ownerContext = "") {
+  const lines = [
+    "Create a new social post using verified website facts in the supplied owner writing style. Do not summarise or paraphrase the About page.",
+  ];
+
+  if (ownerContext) {
+    lines.push(`Current angle/context only: ${ownerContext}`);
+  }
+
+  return lines.join("\n");
 }
 
 function setReadState(state) {
@@ -324,7 +337,8 @@ async function generateDemoImage(button) {
 
 async function runFreeV1Scan(button) {
   const businessUrl = getBusinessUrl();
-  const ownerTruth = getOwnerTruth();
+  const ownerVoice = getOwnerVoice();
+  const ownerContext = getOwnerContext();
 
   if (!businessUrl) {
     setScanStatus("Add a business website URL first.");
@@ -334,7 +348,7 @@ async function runFreeV1Scan(button) {
 
   button.disabled = true;
   button.innerHTML = "Scanning website...";
-  setScanStatus("Scan started. Reading website and owner truth...");
+  setScanStatus("Scan started. Reading website facts, owner voice, and today's angle...");
   setActiveStep(2);
   setReadState("loading");
 
@@ -345,10 +359,10 @@ async function runFreeV1Scan(button) {
       body: JSON.stringify({
         mode: "hybrid",
         businessUrl,
-        pastedSourceText: ownerTruth,
-        manualBusinessContext: ownerTruth,
+        pastedSourceText: "",
+        manualBusinessContext: "",
         founderGoal: getFounderGoal(),
-        ownerWritingSample: ownerTruth,
+        ownerWritingSample: ownerVoice,
       }),
     });
 
@@ -368,22 +382,19 @@ async function runFreeV1Scan(button) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         mode: "execution",
-        idea: getRecommendedMove(freeV1Profile),
+        idea: buildGenerationIdea(ownerContext),
         category: freeV1Profile?.contentProfile?.suggestedCategory || "Product in Real Life",
         businessUrl,
-        pastedSourceText: ownerTruth,
-        manualBusinessContext: ownerTruth,
+        pastedSourceText: "",
+        manualBusinessContext: "",
         businessSummary: freeV1Profile?.businessProfile?.summary || "",
-        manualVoiceInput: ownerTruth,
+        manualVoiceInput: ownerVoice,
         voiceProfile: freeV1Profile?.founderVoice || null,
         initialProfile: freeV1Profile,
         quickType: "Business",
         ownerNudge: getFounderGoal(),
         founderGoal: getFounderGoal(),
-        weeklyPosts: [
-          freeV1Profile?.executionPlan?.summary || "",
-          ...(freeV1Profile?.executionPlan?.actions || []),
-        ].filter(Boolean).join("\n"),
+        weeklyPosts: "",
       }),
     });
 

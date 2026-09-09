@@ -51,7 +51,7 @@ runTest("legacy bad batch fails governance validation", () => {
   assert.ok(result.reasons.length >= 3);
 });
 
-runTest("new fallback returns exactly 3 owner-voiced posts", () => {
+runTest("safe fallback returns 3 factual posts without importing owner-sample facts", () => {
   const posts = buildSafeFallbackPosts({
     category: "Standards and Care",
     businessName: "Clear Flow Plumbing",
@@ -72,7 +72,7 @@ runTest("new fallback returns exactly 3 owner-voiced posts", () => {
 
   assert.strictEqual(governance.failed, false, governance.reasons.join("; "));
   assert.ok(!/yevib/i.test(combined), "fallback must not mention YEVIB");
-  assert.ok(/(?:\bI\b|\bwe\b|\bour\b)/i.test(combined), "fallback must use owner-style first-person language");
+  assert.ok(!combined.toLowerCase().includes("people were tired of vague quotes"), "fallback must not import owner-sample factual content");
   posts.forEach((post) => {
     assert.ok(!/#YEVIB\b/i.test(post), "fallback must not use #YEVIB");
   });

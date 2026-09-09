@@ -3576,46 +3576,8 @@ function laneText(blocks = [], fallback = "") {
   return text || fallback;
 }
 
-function chooseVoiceSourceText({
-  mode,
-  founderText,
-  customerText,
-  productText,
-  pastedSourceText,
-  manualBusinessContext,
-  sourceProfileSummary,
-}) {
-  const founderClean = clipText(founderText || "", 3000);
-  const customerClean = clipText(customerText || "", 3000);
-  const productClean = clipText(productText || "", 3000);
-  const pastedClean = clipText(pastedSourceText || "", 3000);
-  const manualClean = clipText(manualBusinessContext || "", 2000);
-  const summaryClean = clipText(sourceProfileSummary || "", 1000);
-
-  if (mode === "manual") {
-    if (manualClean && !isStyleOnlyOwnerSample(manualClean)) return manualClean;
-    if (pastedClean && !isStyleOnlyOwnerSample(pastedClean)) return pastedClean;
-    return founderClean || productClean || summaryClean;
-  }
-
-  if (mode === "hybrid") {
-    if (manualClean && !isStyleOnlyOwnerSample(manualClean)) return manualClean;
-    if (pastedClean && !looksLikeTestimonial(pastedClean) && !isStyleOnlyOwnerSample(pastedClean)) {
-      return pastedClean;
-    }
-    if (founderClean && !looksLikeTestimonial(founderClean)) return founderClean;
-    return [summaryClean, productClean, customerClean ? `Customer signals:\n${customerClean}` : ""]
-      .filter(Boolean)
-      .join("\n\n")
-      .trim();
-  }
-
-  if (founderClean && !looksLikeTestimonial(founderClean)) return founderClean;
-
-  return [summaryClean, productClean, customerClean ? `Customer signals:\n${customerClean}` : ""]
-    .filter(Boolean)
-    .join("\n\n")
-    .trim();
+function chooseVoiceSourceText({ ownerWritingSample }) {
+  return clipText(ownerWritingSample || "", 3000);
 }
 
 function isWeakVoiceSource(text = "") {
@@ -6272,7 +6234,7 @@ function extractFallbackEvidence({
   return {
     name,
     summary,
-    summaryLine: summary ? clipText(summary, 220) : "",
+    summaryLine: "",
     offers: offerList,
     primaryOffer: offerList[0] || "",
     secondaryOffer: offerList[1] || "",
@@ -6473,11 +6435,8 @@ function buildBusinessSpecificFallbackPosts({
     offers,
     location,
   });
-  const ownerText = String(manualVoiceInput || "").replace(/\s+/g, " ").trim();
-  const opener =
-    ownerText.length >= 40 && !isStyleOnlyOwnerSample(ownerText)
-      ? extractOwnerOpener(ownerText)
-      : "";
+  // Owner samples are style evidence only. Never copy their factual topics or phrases into fallback content.
+  const opener = "";
   const bodies = composeDomainFallbackPosts(evidence, opener);
 
   return attachFallbackTags(bodies, tags);
@@ -6609,6 +6568,80 @@ function parseGeneratedPosts(rawText = "") {
   }
 
   return [];
+}
+
+
+function getBoundaryNgrams(text = "", size = 8) {
+  const words = String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+
+  const grams = [];
+  for (let i = 0; i <= words.length - size; i += 1) {
+    grams.push(words.slice(i, i + size).join(" "));
+  }
+  return grams;
+}
+
+function detectWebsiteBrochureLeakage(posts = [], profile = {}) {
+  const reasons = [];
+  const businessName = String(profile?.businessProfile?.name || "").trim().toLowerCase();
+  const websiteText = [
+    profile?.sourceProfile?.founderLanePreview || "",
+    profile?.sourceProfile?.productLanePreview || "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const websiteNgrams = new Set(getBoundaryNgrams(websiteText, 8));
+
+  const brochurePatterns = [
+    /\bfamily[- ]owned and operated\b/i,
+    /\bbased in\b/i,
+    /\blocated in\b/i,
+    /\bproviding comprehensive\b/i,
+    /\bowner,? operator\b/i,
+    /\bhas over \d+ years\b/i,
+    /\blists (?:a|an|the)\b/i,
+    /\bhigh-quality workmanship\b/i,
+    /\btrustworthy and reassuring customer experience\b/i,
+  ];
+
+  (Array.isArray(posts) ? posts : []).forEach((post, index) => {
+    const body = String(post || "")
+      .replace(/\n?#\w+(?:\s+#\w+)*/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const lower = body.toLowerCase();
+    const patternHits = brochurePatterns.filter((pattern) => pattern.test(body)).length;
+
+    if (patternHits >= 2) {
+      reasons.push(`Post ${index + 1}: brochure/About-page sentence pattern detected.`);
+    }
+
+    if (
+      businessName &&
+      lower.startsWith(businessName) &&
+      /\b(is|lists|provides|offers|has)\b/.test(lower.slice(0, 140))
+    ) {
+      reasons.push(`Post ${index + 1}: business-summary opener detected.`);
+    }
+
+    if (websiteNgrams.size > 0) {
+      const overlap = getBoundaryNgrams(body, 8).find((gram) => websiteNgrams.has(gram));
+      if (overlap) {
+        reasons.push(`Post ${index + 1}: copied website wording detected.`);
+      }
+    }
+  });
+
+  return {
+    failed: reasons.length > 0,
+    reasons: uniqueStrings(reasons, 12),
+  };
 }
 
 async function generatePostsWithRetry(promptBase, category, voiceContext = {}) {
@@ -6743,11 +6776,21 @@ You must correct this now:
   reason: retryReason || "Unknown output enforcement failure."
 });
 
-return buildSafeFallbackPosts({
+const hasOwnerVoiceStyle = Boolean(
+    String(voiceContext.manualVoiceInput || "").replace(/\s+/g, " ").trim()
+  );
+
+  if (hasOwnerVoiceStyle) {
+    const boundaryError = new Error("OWNER_VOICE_BOUNDARY_BLOCKED");
+    boundaryError.code = "OWNER_VOICE_BOUNDARY_BLOCKED";
+    throw boundaryError;
+  }
+
+  return buildSafeFallbackPosts({
     category,
     businessName: voiceContext.businessName,
-    manualVoiceInput: voiceContext.manualVoiceInput,
-    voiceProfile: voiceContext.voiceProfile,
+    manualVoiceInput: "",
+    voiceProfile: null,
     businessSummary: voiceContext.businessSummary,
     offers: voiceContext.offers,
   });
@@ -7704,6 +7747,7 @@ function buildEvidenceProfile(profile = {}) {
   const pagesScanned = Number(debug?.pagesScanned || 0);
   const hasWebsite = Boolean(sourceProfile?.urlUsed);
     const hasSuppliedOwnerWriting = Boolean(
+    sourceProfile?.ownerWritingSampleUsed ||
     sourceProfile?.pastedTextUsed ||
     sourceProfile?.manualContextUsed
   );
@@ -10243,13 +10287,7 @@ async function buildBusinessProfile(input = {}) {
   ]);
 
   const safeVoiceSourceText = chooseVoiceSourceText({
-    mode,
-    founderText,
-    customerText,
-    productText,
-    pastedSourceText,
-    manualBusinessContext,
-    sourceProfileSummary: sourceProfile?.businessProfile?.summary || "",
+    ownerWritingSample,
   });
 
   const ownerStyleProfile = buildOwnerVoiceStyleProfile(ownerWritingSample);
@@ -10257,13 +10295,17 @@ async function buildBusinessProfile(input = {}) {
     ? formatOwnerVoiceStyleProfileForPrompt(ownerStyleProfile)
     : "";
   const voiceAgentInput = [
-    clipText(safeVoiceSourceText || founderSourceInput || "", 5000),
+    clipText(safeVoiceSourceText || "", 5000),
     ownerStylePromptBlock,
   ]
     .filter(Boolean)
     .join("\n\n");
 
-  const safeFounderVoice = await runJsonChat(voiceAgentPrompt(voiceAgentInput));
+  const voiceAgentSource =
+    voiceAgentInput ||
+    "No owner writing sample supplied. Return a neutral, clear, practical small-business voice profile. Do not infer writing style from website content.";
+
+  const safeFounderVoice = await runJsonChat(voiceAgentPrompt(voiceAgentSource));
 
   const finalBusinessName =
     sourceProfile?.businessProfile?.name ||
@@ -10346,23 +10388,15 @@ async function buildBusinessProfile(input = {}) {
     sourceProfile: {
       dominantSource: sourceProfile?.sourceProfile?.dominantSource || "mixed",
       voiceSourceText: safeVoiceSourceText,
-      voiceSourceLane:
-        mode === "manual"
-          ? "manual"
-          : safeVoiceSourceText === founderText
-          ? "founder"
-          : safeVoiceSourceText === pastedSourceText
-          ? "pasted"
-          : safeVoiceSourceText === manualBusinessContext
-          ? "manual"
-          : "fallback",
-      weakVoiceSource: isWeakVoiceSource(safeVoiceSourceText),
+      voiceSourceLane: safeVoiceSourceText ? "owner_sample" : "neutral_fallback",
+      weakVoiceSource: !safeVoiceSourceText || isWeakVoiceSource(safeVoiceSourceText),
       founderLanePreview: founderText,
       customerLanePreview: customerText,
       productLanePreview: productText,
       urlUsed: Boolean(normalizedUrl),
       pastedTextUsed: Boolean(pastedSourceText),
       manualContextUsed: Boolean(manualBusinessContext),
+      ownerWritingSampleUsed: Boolean(ownerWritingSample),
     },
     founderVoice: safeFounderVoice,
     customerOutcome,
@@ -11293,6 +11327,15 @@ ${approvedPostClaimsPacket.safeClaimLevel}
 APPROVED CLAIMS:
 ${approvedPostClaimLines}
 
+SOURCE ROLE FIREWALL — ABSOLUTE:
+- WEBSITE / APPROVED CLAIMS = factual authority only. Website wording, tone, sentence rhythm, point of view, About-page copy, Our Story copy, and marketing phrasing must NEVER be used as writing-style authority.
+- OWNER VOICE STYLE PROFILE = style authority only: sentence length, rhythm, vocabulary level, directness, casualness, first/third-person tendency, pacing, and punctuation. Never import factual topics, stories, people, events, or claims from the owner sample.
+- OWNER CONTEXT / FOUNDER GOAL = purpose and angle only. It can decide what the post should focus on, but its wording is not reusable copy and its factual statements are not approved claims unless independently supported by website evidence.
+- Generate NEW wording from website facts × owner style × current purpose.
+- NEVER turn an About, Founder, Our Story, service-summary, or homepage paragraph into a social post by copying, summarising, lightly rewriting, or adding hashtags.
+- A post that reads like “Business X is…”, “Business X lists…”, “based in… providing…”, an About-page biography, or a service-directory description FAILS this boundary.
+- If safe website facts are thin, reduce factual specificity. Never compensate by copying website prose.
+
 NON-NEGOTIABLE CLAIM RULES:
 - Claim safety limits facts, not voice. When an owner voice style profile is provided, keep the owner's tone, rhythm, and point of view dominant across all 3 posts — but base post content only on business evidence, profile, lens, and approved claims.
 - When an owner voice style profile is provided, first-person owner voice is allowed even if approved claims are weak; do not switch to third person or neutral brand voice because evidence is thin.
@@ -11522,19 +11565,51 @@ ${extraCategoryRule}
 
 const recentChosenPosts = getRecentChosenPostsForBusiness(finalBusinessName, 6);
 
+const generationVoiceContext = {
+  businessName: finalBusinessName,
+  manualVoiceInput,
+  voiceProfile,
+  businessSummary:
+    initialProfile?.businessProfile?.summary || businessSummary || "",
+  offers: initialProfile?.brandProductTruth?.offers || [],
+};
+
 let posts = await generatePostsWithHistoryGuard(
   prompt,
   category,
   recentChosenPosts,
-  {
-    businessName: finalBusinessName,
-    manualVoiceInput,
-    voiceProfile,
-    businessSummary:
-      initialProfile?.businessProfile?.summary || businessSummary || "",
-    offers: initialProfile?.brandProductTruth?.offers || [],
-  }
+  generationVoiceContext
 );
+
+let brochureLeakageCheck = detectWebsiteBrochureLeakage(posts, initialProfile || {});
+if (brochureLeakageCheck.failed) {
+  console.warn("SOURCE ROLE FIREWALL RETRY:", brochureLeakageCheck.reasons);
+  const firewallRetry = `
+SOURCE ROLE FIREWALL RETRY:
+The previous draft sounded like website/About-page copy.
+- Start again with completely new social-post wording.
+- Website and approved claims supply facts only.
+- Owner voice profile supplies style only.
+- Founder goal/current context supplies purpose only.
+- Do not open with a business biography or service-directory summary.
+- Do not copy or closely paraphrase any website sentence.
+- Keep the post socially natural, owner-voiced when owner style exists, and factually inside approved claims.
+`.trim();
+
+  posts = await generatePostsWithRetry(
+    `${prompt}\n\n${firewallRetry}`,
+    category,
+    generationVoiceContext
+  );
+  brochureLeakageCheck = detectWebsiteBrochureLeakage(posts, initialProfile || {});
+
+  if (brochureLeakageCheck.failed) {
+    const boundaryError = new Error("OWNER_VOICE_BOUNDARY_BLOCKED");
+    boundaryError.code = "OWNER_VOICE_BOUNDARY_BLOCKED";
+    boundaryError.reasons = brochureLeakageCheck.reasons;
+    throw boundaryError;
+  }
+}
 
     if (posts.length < 3) {
       return res.status(500).json({
@@ -11548,15 +11623,10 @@ let posts = await generatePostsWithHistoryGuard(
     const sampleLeakageCheck = detectOwnerSampleContentLeakage(posts, manualVoiceInput);
     if (sampleLeakageCheck.failed) {
       console.warn("OWNER SAMPLE LEAKAGE GUARD:", sampleLeakageCheck.reasons);
-      posts = buildSafeFallbackPosts({
-        category,
-        businessName: finalBusinessName,
-        manualVoiceInput,
-        voiceProfile,
-        businessSummary:
-          initialProfile?.businessProfile?.summary || businessSummary || "",
-        offers: initialProfile?.brandProductTruth?.offers || [],
-      });
+      const boundaryError = new Error("OWNER_VOICE_BOUNDARY_BLOCKED");
+      boundaryError.code = "OWNER_VOICE_BOUNDARY_BLOCKED";
+      boundaryError.reasons = sampleLeakageCheck.reasons;
+      throw boundaryError;
     }
 
     posts = enforceFinalQuietRules(posts, category);
@@ -11581,6 +11651,19 @@ let posts = await generatePostsWithHistoryGuard(
 });
   } catch (err) {
     console.error("GENERATE ERROR:", err);
+
+    if (
+      err?.code === "OWNER_VOICE_BOUNDARY_BLOCKED" ||
+      err?.message === "OWNER_VOICE_BOUNDARY_BLOCKED"
+    ) {
+      return res.status(422).json({
+        error:
+          "YEVIB blocked a draft because it was using website/About-page wording or owner-sample content in the wrong role. Try again, or add a little more owner voice.",
+        code: "OWNER_VOICE_BOUNDARY_BLOCKED",
+        reasons: Array.isArray(err?.reasons) ? err.reasons : [],
+      });
+    }
+
     res.status(500).json({ error: "Failed to generate posts." });
   }
 });
@@ -12449,4 +12532,6 @@ module.exports = {
   detectOwnerSampleContentLeakage,
   isStyleOnlyOwnerSample,
   buildGenerationContext,
+  chooseVoiceSourceText,
+  detectWebsiteBrochureLeakage,
 };

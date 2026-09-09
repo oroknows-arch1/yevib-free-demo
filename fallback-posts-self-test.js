@@ -122,7 +122,7 @@ runTest("quintessential plumbing avoids pasted marketing offer blobs", () => {
   assert.ok(/plumb|repair|installation|quote|emergency/i.test(combined.toLowerCase()));
 });
 
-runTest("plumbing fallback sounds like plumbing and keeps owner opener", () => {
+runTest("plumbing fallback sounds like plumbing without importing owner-sample facts", () => {
   const posts = postBodies(
     buildCase({
       category: "Standards and Care",
@@ -139,7 +139,7 @@ runTest("plumbing fallback sounds like plumbing and keeps owner opener", () => {
   assertNoBannedFallbackPhrases(posts);
 
   const combined = posts.join("\n");
-  assert.ok(/(?:\bI\b|\bwe\b)/i.test(combined));
+  assert.ok(!combined.toLowerCase().includes("people were tired of vague quotes"));
   assert.ok(/plumb|callout|repair|quote|homeowner/i.test(combined.toLowerCase()));
 });
 
