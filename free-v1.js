@@ -346,6 +346,16 @@ async function runFreeV1Scan(button) {
     return;
   }
 
+  // A new scan invalidates previous business results, including after a failed scan.
+  freeV1Profile = null;
+  freeV1Posts = [];
+  selectedPost = "";
+  const options = $(".post-options");
+  if (options) options.innerHTML = "";
+  const imagePreview = $("#demoImagePreview");
+  if (imagePreview) imagePreview.innerHTML = "";
+  renderReadyToUse();
+
   button.disabled = true;
   button.innerHTML = "Scanning website...";
   setScanStatus("Scan started. Reading website facts, owner voice, and today's angle...");
