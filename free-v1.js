@@ -338,6 +338,7 @@ async function generateDemoImage(button) {
 async function runFreeV1Scan(button) {
   const businessUrl = getBusinessUrl();
   const ownerVoice = getOwnerVoice();
+  const businessFacts = ($("#businessFacts")?.value || "").trim();
   const ownerContext = getOwnerContext();
 
   if (!businessUrl) {
@@ -370,7 +371,7 @@ async function runFreeV1Scan(button) {
         mode: "hybrid",
         businessUrl,
         pastedSourceText: "",
-        manualBusinessContext: "",
+        manualBusinessContext: businessFacts,
         founderGoal: getFounderGoal(),
         ownerWritingSample: ownerVoice,
       }),
@@ -396,7 +397,7 @@ async function runFreeV1Scan(button) {
         category: freeV1Profile?.contentProfile?.suggestedCategory || "Product in Real Life",
         businessUrl,
         pastedSourceText: "",
-        manualBusinessContext: "",
+        manualBusinessContext: businessFacts,
         businessSummary: freeV1Profile?.businessProfile?.summary || "",
         manualVoiceInput: ownerVoice,
         voiceProfile: freeV1Profile?.founderVoice || null,

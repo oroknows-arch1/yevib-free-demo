@@ -3455,7 +3455,20 @@ async function gatherLaneSources(normalizedUrl) {
     homepage = await fetchPageData(normalizedUrl);
     allPages.push({ type: "homepage", ...homepage });
     attempted.add(normalizedUrl);
-  } catch {}
+  } catch {
+    // Some business sites have a valid certificate only on their www host.
+    // Retry that HTTPS host with normal certificate validation; never disable TLS checks.
+    const alternate = new URL(normalizedUrl);
+    if (!alternate.hostname.startsWith("www.") && !/^\d+(?:\.\d+){3}$/.test(alternate.hostname)) {
+      alternate.hostname = `www.${alternate.hostname}`;
+      try {
+        homepage = await fetchPageData(alternate.toString());
+        normalizedUrl = alternate.toString();
+        allPages.push({ type: "homepage", ...homepage });
+        attempted.add(normalizedUrl);
+      } catch {}
+    }
+  }
 
   const homepageLinks = homepage?.rawHtml ? extractLinks(homepage.rawHtml, normalizedUrl) : [];
   const dedupedHomepageLinks = dedupeLinksByHref(homepageLinks, 80);
@@ -6801,7 +6814,7 @@ function enforceFinalQuietRules(posts = [], category = "") {
 
 app.get("/health", (req, res) => {
   res.set("Cache-Control", "no-store");
-  res.json({ status: "ok", release: "business-relevance-v1", commit: process.env.RENDER_GIT_COMMIT || null });
+  res.json({ status: "ok", release: "business-relevance-v2", commit: process.env.RENDER_GIT_COMMIT || null });
 });
 
 app.get("/", (req, res) => {
@@ -12530,6 +12543,7 @@ if (isDirectRun) {
 }
 
 module.exports = {
+  gatherLaneSources,
   buildBusinessFactSources,
   checkBusinessRelevance,
   GOVERNANCE_BANNED_PATTERNS,

@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { buildBusinessFactSources, checkBusinessRelevance,
+const { gatherLaneSources, buildBusinessFactSources, checkBusinessRelevance,
   buildOwnerVoiceStyleProfile, formatOwnerVoiceStyleProfileForPrompt } = require('./server');
 
 const sample = 'Time is a strange one because most days don’t feel particularly important while you’re living them. You go to work, come home, do what needs doing and carry on. Then you look back a few years later and realise that was your life happening the whole time lol. Makes you think a bit differently about what deserves your attention now instead of always waiting for later.';
@@ -15,6 +15,22 @@ const style = formatOwnerVoiceStyleProfileForPrompt(buildOwnerVoiceStyleProfile(
 assert.ok(!style.includes('Time is a strange') && !style.includes('you go to work'), 'Raw sample topics must not be reintroduced through quarantined phrases');
 
 (async () => {
+  const realFetch = global.fetch;
+  const fetched = [];
+  global.fetch = async (url) => {
+    fetched.push(String(url));
+    if (String(url) === 'https://timeless-treasures.com.au/') throw Error('Certificate hostname mismatch');
+    if (String(url) === 'https://www.timeless-treasures.com.au/') return {
+      ok: true, text: async () => `<html><title>Timeless Treasures Gifts and Decor</title><p>${description}</p></html>`,
+    };
+    return { ok: false, status: 404 };
+  };
+  try {
+    const gathered = await gatherLaneSources('https://timeless-treasures.com.au/');
+    assert.equal(fetched[1], 'https://www.timeless-treasures.com.au/');
+    assert.equal(gathered.pages[0].url, 'https://www.timeless-treasures.com.au/');
+    assert.ok(buildBusinessFactSources({ laneGather: gathered }).productText.includes('Timeless Treasures'));
+  } finally { global.fetch = realFetch; }
   const profile = { businessProfile: { name: 'Timeless Treasures', summary: description }, sourceProfile: { productLanePreview: description } };
   const posts = ['Choose a gift for someone you know.', 'Find something for your home.', 'A gift does not need a big occasion.'];
   const verdict = { businessMatchesSource: true, posts: [0, 1, 2].map(index => ({ index, relevant: true })) };
